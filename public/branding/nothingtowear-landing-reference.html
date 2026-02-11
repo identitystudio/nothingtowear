@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NothingToWear.ai — See Your Wardrobe Clearly</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#F7F3EE;--warm-white:#FDFBF8;--tan:#C4A882;--tan-hover:#B8986E;--tan-light:#E8DDD0;--charcoal:#2A2520;--warm-gray:#6B6058;--soft-gray:#9B9189;--blush:#E8D5C4;--sage:#B5BFA8;--serif:'Playfair Display',Georgia,serif;--sans:'DM Sans',-apple-system,sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);background:var(--warm-white);color:var(--charcoal);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:1.25rem 3rem;display:flex;justify-content:space-between;align-items:center;background:rgba(253,251,248,0.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid rgba(196,168,130,0.15);transition:all .4s ease}
+nav.scrolled{padding:.9rem 3rem;box-shadow:0 2px 30px rgba(42,37,32,0.06)}
+.nav-logo{font-family:var(--serif);font-size:1.15rem;font-weight:500;letter-spacing:-.02em;color:var(--charcoal)}
+.nav-logo span{font-style:italic;color:var(--tan)}
+.nav-cta{font-family:var(--sans);font-size:.8rem;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--charcoal);text-decoration:none;padding:.6rem 1.5rem;border:1px solid var(--charcoal);border-radius:100px;transition:all .3s ease}
+.nav-cta:hover{background:var(--charcoal);color:var(--warm-white)}
+
+.hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:8rem 2rem 5rem;position:relative;background:var(--warm-white)}
+.hero::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse 80% 60% at 20% 10%,rgba(232,213,196,0.3) 0%,transparent 60%),radial-gradient(ellipse 60% 50% at 85% 80%,rgba(181,191,168,0.15) 0%,transparent 60%),radial-gradient(ellipse 40% 40% at 50% 50%,rgba(196,168,130,0.08) 0%,transparent 60%);pointer-events:none}
+.hero-content{position:relative;z-index:2;max-width:780px;opacity:0;animation:fadeUp 1s ease .3s forwards}
+.hero-eyebrow{font-family:var(--sans);font-size:.75rem;font-weight:500;letter-spacing:.18em;text-transform:uppercase;color:var(--tan);margin-bottom:2.2rem;opacity:0;animation:fadeUp .8s ease .1s forwards}
+.hero h1{font-family:var(--serif);font-size:clamp(2.4rem,5.5vw,3.8rem);font-weight:400;line-height:1.15;letter-spacing:-.025em;color:var(--charcoal);margin-bottom:2rem}
+.hero h1 em{font-style:italic;color:var(--warm-gray)}
+.hero-sub{font-family:var(--sans);font-size:clamp(1.05rem,2vw,1.2rem);font-weight:300;line-height:1.7;color:var(--warm-gray);max-width:600px;margin:0 auto 1rem}
+.hero-sub strong{font-weight:500;color:var(--charcoal)}
+.hero-until{font-family:var(--serif);font-style:italic;font-size:1.35rem;color:var(--tan);margin:1.5rem 0 3rem;opacity:0;animation:fadeUp .8s ease .7s forwards}
+
+.cta-btn{display:inline-flex;align-items:center;gap:.6rem;font-family:var(--sans);font-size:.95rem;font-weight:500;letter-spacing:.04em;color:var(--warm-white);background:var(--tan);border:none;padding:1.1rem 2.8rem;border-radius:100px;cursor:pointer;text-decoration:none;transition:all .35s ease;box-shadow:0 4px 25px rgba(196,168,130,0.3);opacity:0;animation:fadeUp .8s ease .9s forwards}
+.cta-btn:hover{background:var(--tan-hover);transform:translateY(-2px);box-shadow:0 8px 35px rgba(196,168,130,0.4)}
+.cta-btn svg{transition:transform .3s ease}
+.cta-btn:hover svg{transform:translateX(3px)}
+.trust-line{font-family:var(--sans);font-size:.82rem;font-weight:400;color:var(--soft-gray);margin-top:1.2rem;letter-spacing:.02em;opacity:0;animation:fadeUp .8s ease 1.1s forwards}
+
+.scroll-indicator{position:absolute;bottom:2.5rem;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:.5rem;opacity:0;animation:fadeUp .8s ease 1.4s forwards}
+.scroll-indicator span{font-size:.65rem;letter-spacing:.15em;text-transform:uppercase;color:var(--soft-gray)}
+.scroll-line{width:1px;height:40px;background:linear-gradient(to bottom,var(--tan),transparent);animation:scrollPulse 2s ease infinite}
+
+.section-label{font-family:var(--sans);font-size:.7rem;font-weight:500;letter-spacing:.2em;text-transform:uppercase;color:var(--tan);margin-bottom:2rem}
+
+.enemy-section{padding:6rem 2rem;background:var(--cream);position:relative}
+.enemy-section::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent,var(--tan-light),transparent)}
+.enemy-inner{max-width:720px;margin:0 auto}
+.enemy-headline{font-family:var(--serif);font-size:clamp(1.6rem,3.5vw,2.2rem);font-weight:400;line-height:1.35;color:var(--charcoal);margin-bottom:3rem;letter-spacing:-.015em}
+.enemy-headline em{font-style:italic;color:var(--warm-gray)}
+.enemy-list{display:flex;flex-direction:column;gap:1.6rem;margin-bottom:3.5rem}
+.enemy-item{display:flex;align-items:flex-start;gap:1.2rem}
+.enemy-x{flex-shrink:0;width:28px;height:28px;border-radius:50%;background:rgba(42,37,32,0.06);display:flex;align-items:center;justify-content:center;font-family:var(--sans);font-size:.75rem;font-weight:600;color:var(--soft-gray);margin-top:.15rem}
+.enemy-text{font-family:var(--sans);font-size:1.05rem;font-weight:300;line-height:1.65;color:var(--warm-gray)}
+.enemy-text strong{font-weight:500;color:var(--charcoal)}
+.enemy-verdict{background:var(--charcoal);color:var(--cream);padding:2.5rem 3rem;border-radius:16px;text-align:center;position:relative;overflow:hidden}
+.enemy-verdict::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse 60% 80% at 50% 0%,rgba(196,168,130,0.12) 0%,transparent 60%);pointer-events:none}
+.enemy-verdict p{position:relative;z-index:2;font-family:var(--sans);font-size:1rem;font-weight:300;line-height:1.7;color:rgba(247,243,238,0.7)}
+.enemy-verdict strong{display:block;font-family:var(--serif);font-size:1.3rem;font-weight:500;font-style:italic;color:var(--tan);margin-top:.6rem}
+
+.model-section{padding:7rem 2rem;background:var(--warm-white);text-align:center;position:relative;overflow:hidden}
+.model-section::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse 50% 60% at 50% 30%,rgba(232,213,196,0.2) 0%,transparent 60%);pointer-events:none}
+.model-inner{position:relative;z-index:2;max-width:800px;margin:0 auto}
+.model-statement{font-family:var(--serif);font-size:clamp(2.6rem,6vw,4.2rem);font-weight:400;font-style:italic;line-height:1.15;letter-spacing:-.03em;color:var(--charcoal);margin-bottom:2rem}
+.model-statement .highlight{color:var(--tan);font-style:normal;position:relative}
+.model-statement .highlight::after{content:'';position:absolute;bottom:-4px;left:0;right:0;height:3px;background:var(--tan);opacity:.3;border-radius:2px}
+.model-desc{font-family:var(--sans);font-size:1.15rem;font-weight:300;line-height:1.8;color:var(--warm-gray);max-width:560px;margin:0 auto}
+.model-desc strong{font-weight:500;color:var(--charcoal)}
+.model-divider{width:60px;height:1px;background:var(--tan);margin:2.5rem auto;opacity:.5}
+
+.how-section{padding:7rem 2rem;background:var(--cream)}
+.how-inner{max-width:900px;margin:0 auto}
+.how-header{text-align:center;margin-bottom:4.5rem}
+.how-header h2{font-family:var(--serif);font-size:clamp(1.8rem,4vw,2.6rem);font-weight:400;letter-spacing:-.02em;color:var(--charcoal);margin-top:.8rem}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:3rem}
+.step{text-align:center;padding:2.5rem 1.5rem;position:relative}
+.step-num{font-family:var(--serif);font-size:3.5rem;font-weight:400;color:var(--tan-light);line-height:1;margin-bottom:1.2rem}
+.step h3{font-family:var(--serif);font-size:1.2rem;font-weight:500;color:var(--charcoal);margin-bottom:.8rem}
+.step p{font-family:var(--sans);font-size:.95rem;font-weight:300;line-height:1.7;color:var(--warm-gray)}
+.step+.step::before{content:'';position:absolute;left:-1.5rem;top:50%;width:1px;height:60%;transform:translateY(-50%);background:linear-gradient(to bottom,transparent,var(--tan-light),transparent)}
+
+.belief-section{padding:7rem 2rem;background:var(--charcoal);color:var(--cream);position:relative;overflow:hidden}
+.belief-section::before{content:'';position:absolute;top:0;left:0;right:0;bottom:0;background:radial-gradient(ellipse 50% 50% at 15% 85%,rgba(196,168,130,0.1) 0%,transparent 60%),radial-gradient(ellipse 40% 40% at 80% 20%,rgba(181,191,168,0.06) 0%,transparent 60%);pointer-events:none}
+.belief-inner{max-width:750px;margin:0 auto;text-align:center;position:relative;z-index:2}
+.belief-section .section-label{color:rgba(196,168,130,0.7)}
+.belief-section h2{font-family:var(--serif);font-size:clamp(1.6rem,3.5vw,2.2rem);font-weight:400;line-height:1.4;color:var(--cream);margin-bottom:1rem;letter-spacing:-.01em}
+.belief-section h2 em{font-style:italic;color:var(--tan)}
+.belief-subtitle{font-family:var(--sans);font-size:1rem;font-weight:300;color:rgba(247,243,238,0.5);margin-bottom:3rem;line-height:1.6}
+.belief-grid{display:grid;grid-template-columns:1fr auto 1fr;gap:2rem;align-items:start;text-align:left}
+.belief-col h4{font-family:var(--sans);font-size:.7rem;font-weight:500;letter-spacing:.15em;text-transform:uppercase;margin-bottom:1.4rem}
+.belief-col:first-child h4{color:rgba(155,145,137,0.6)}
+.belief-col:last-child h4{color:var(--tan)}
+.belief-col ul{list-style:none;display:flex;flex-direction:column;gap:1rem}
+.belief-col:first-child li{font-family:var(--sans);font-size:.95rem;font-weight:300;color:rgba(155,145,137,0.5);text-decoration:line-through;line-height:1.5}
+.belief-col:last-child li{font-family:var(--sans);font-size:.95rem;font-weight:400;color:var(--cream);line-height:1.5}
+.belief-divider{width:1px;background:linear-gradient(to bottom,transparent,var(--tan),transparent);min-height:200px;align-self:stretch}
+.belief-bottom{margin-top:3.5rem;padding-top:2.5rem;border-top:1px solid rgba(196,168,130,0.15)}
+.belief-bottom p{font-family:var(--serif);font-style:italic;font-size:1.15rem;color:var(--tan);line-height:1.55}
+
+.stylematch-section{padding:6rem 2rem;background:var(--warm-white);position:relative;overflow:hidden}
+.stylematch-section::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent,var(--tan-light),transparent)}
+.stylematch-inner{max-width:880px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:center}
+.stylematch-copy h2{font-family:var(--serif);font-size:clamp(1.5rem,3vw,2rem);font-weight:400;line-height:1.3;color:var(--charcoal);margin-bottom:1.2rem;letter-spacing:-.015em}
+.stylematch-copy h2 em{font-style:italic;color:var(--tan)}
+.stylematch-copy p{font-family:var(--sans);font-size:.95rem;font-weight:300;line-height:1.75;color:var(--warm-gray);margin-bottom:1rem}
+.stylematch-copy p strong{font-weight:500;color:var(--charcoal)}
+.sm-step{display:flex;align-items:center;gap:1rem;padding:1.1rem 1.4rem;background:var(--cream);border-radius:12px;transition:transform .3s ease}
+.sm-step:hover{transform:translateX(4px)}
+.sm-step+.sm-step{margin-top:.5rem}
+.sm-icon{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1rem;background:rgba(196,168,130,0.12)}
+.sm-text{font-family:var(--sans);font-size:.85rem;font-weight:400;color:var(--charcoal);line-height:1.4}
+.sm-text span{display:block;font-size:.75rem;font-weight:300;color:var(--soft-gray);margin-top:.15rem}
+.sm-connector{width:1px;height:10px;background:var(--tan-light);margin-left:2.15rem}
+.sm-result{margin-top:.8rem;padding:1.2rem 1.4rem;background:var(--charcoal);border-radius:12px;display:flex;align-items:center;gap:1rem}
+.sm-result-icon{width:36px;height:36px;border-radius:50%;background:var(--tan);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:1rem}
+.sm-result-text{font-family:var(--sans);font-size:.85rem;font-weight:400;color:var(--cream);line-height:1.4}
+.sm-result-text span{display:block;font-size:.75rem;font-weight:300;color:rgba(247,243,238,0.5);margin-top:.15rem}
+
+.proof-section{padding:6rem 2rem;background:var(--cream)}
+.proof-inner{max-width:900px;margin:0 auto;text-align:center}
+.proof-section h2{font-family:var(--serif);font-size:clamp(1.5rem,3vw,2rem);font-weight:400;color:var(--charcoal);margin-bottom:3rem;letter-spacing:-.01em}
+.testimonials{display:grid;grid-template-columns:repeat(3,1fr);gap:2rem}
+.testimonial{background:var(--warm-white);padding:2rem;border-radius:16px;text-align:left;border:1px solid rgba(196,168,130,0.15);transition:transform .3s ease,box-shadow .3s ease}
+.testimonial:hover{transform:translateY(-3px);box-shadow:0 12px 40px rgba(42,37,32,0.06)}
+.testimonial-stars{color:var(--tan);font-size:.85rem;letter-spacing:.1em;margin-bottom:.8rem}
+.testimonial p{font-family:var(--sans);font-size:.92rem;font-weight:300;line-height:1.7;color:var(--warm-gray);font-style:italic;margin-bottom:1rem}
+.testimonial-author{font-family:var(--sans);font-size:.8rem;font-weight:500;color:var(--charcoal)}
+.testimonial-meta{font-family:var(--sans);font-size:.72rem;color:var(--soft-gray);margin-top:.15rem}
+
+.final-cta{padding:7rem 2rem 8rem;background:var(--warm-white);text-align:center;position:relative}
+.final-cta::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent,var(--tan-light),transparent)}
+.final-inner{max-width:620px;margin:0 auto}
+.final-cta h2{font-family:var(--serif);font-size:clamp(1.8rem,4vw,2.6rem);font-weight:400;color:var(--charcoal);margin-bottom:1rem;letter-spacing:-.02em}
+.final-cta h2 em{font-style:italic;color:var(--warm-gray)}
+.final-cta .hero-sub{margin-bottom:2.5rem}
+.final-cta .cta-btn{opacity:1;animation:none}
+.final-cta .trust-line{opacity:1;animation:none}
+
+footer{padding:2.5rem 3rem;display:flex;justify-content:space-between;align-items:center;border-top:1px solid rgba(196,168,130,0.15);background:var(--warm-white)}
+footer p{font-family:var(--sans);font-size:.75rem;color:var(--soft-gray)}
+footer a{color:var(--soft-gray);text-decoration:none;transition:color .3s}
+footer a:hover{color:var(--charcoal)}
+
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes scrollPulse{0%,100%{opacity:.4}50%{opacity:1}}
+.reveal{opacity:0;transform:translateY(30px);transition:all .7s cubic-bezier(0.22,1,0.36,1)}
+.reveal.visible{opacity:1;transform:translateY(0)}
+.reveal-d1{transition-delay:.1s}
+.reveal-d2{transition-delay:.2s}
+.reveal-d3{transition-delay:.3s}
+
+@media(max-width:768px){
+nav{padding:1rem 1.5rem}
+nav.scrolled{padding:.8rem 1.5rem}
+.hero{padding:7rem 1.5rem 4rem}
+.steps{grid-template-columns:1fr;gap:1rem}
+.step+.step::before{display:none}
+.testimonials{grid-template-columns:1fr}
+.belief-grid{grid-template-columns:1fr;gap:2rem;text-align:center}
+.belief-divider{width:60%;height:1px;min-height:unset;margin:0 auto;background:linear-gradient(to right,transparent,var(--tan),transparent)}
+.stylematch-inner{grid-template-columns:1fr;gap:2.5rem}
+.enemy-verdict{padding:2rem}
+footer{flex-direction:column;gap:.8rem;text-align:center}
+}
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="nav-logo">NothingToWear<span>.ai</span></div>
+  <a href="#start" class="nav-cta">Get Started</a>
+</nav>
+
+<section class="hero" id="top">
+  <div class="hero-content">
+    <div class="hero-eyebrow">Your daily clarity engine</div>
+    <h1>You Don't Have <em>"Nothing to Wear."</em><br>You Just Can't See It Yet.</h1>
+    <p class="hero-sub">Your closet is full. Your mornings are chaos. Not because you need more clothes — because you've never been able to see what works on <strong>your body</strong>.</p>
+    <p class="hero-until">Until now.</p>
+    <a href="#start" class="cta-btn">Start Now <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></a>
+    <p class="trust-line">Join women who finally see their wardrobe clearly.</p>
+  </div>
+  <div class="scroll-indicator">
+    <span>Discover</span>
+    <div class="scroll-line"></div>
+  </div>
+</section>
+
+<section class="enemy-section">
+  <div class="enemy-inner reveal">
+    <div class="section-label">You've tried everything</div>
+    <h2 class="enemy-headline">You don't have a <em>wardrobe</em> problem.<br>You have a <em>visibility</em> problem.</h2>
+    <div class="enemy-list">
+      <div class="enemy-item reveal reveal-d1">
+        <div class="enemy-x">&#10005;</div>
+        <div class="enemy-text"><strong>Buying more clothes didn't fix it.</strong> You added pieces hoping they'd complete something. They didn't. Your closet got fuller. Your mornings got harder.</div>
+      </div>
+      <div class="enemy-item reveal reveal-d2">
+        <div class="enemy-x">&#10005;</div>
+        <div class="enemy-text"><strong>Pinterest inspiration didn't fix it.</strong> You pinned hundreds of outfits that looked incredible on other women. Then you stood in front of your closet and couldn't translate a single one to your body.</div>
+      </div>
+      <div class="enemy-item reveal reveal-d3">
+        <div class="enemy-x">&#10005;</div>
+        <div class="enemy-text"><strong>Styling apps and subscription boxes didn't fix it.</strong> Someone else picking clothes for you doesn't teach you anything. The decision fatigue stays. The uncertainty stays. The morning panic stays.</div>
+      </div>
+    </div>
+    <div class="enemy-verdict reveal">
+      <p>None of it worked because the real problem was never the clothes.</p>
+      <strong>You couldn't see what works on your body.</strong>
+    </div>
+  </div>
+</section>
+
+<section class="model-section">
+  <div class="model-inner reveal">
+    <div class="section-label">The breakthrough</div>
+    <div class="model-statement">Your body is<br>the <span class="highlight">model</span>.</div>
+    <div class="model-divider"></div>
+    <p class="model-desc">Upload one mirror selfie. <strong>Your body becomes the mannequin.</strong> Every outfit the AI builds, you see on you — your shape, your proportions, your reality. Not a stranger in a magazine. You.</p>
+  </div>
+</section>
+
+<section class="how-section" id="how">
+  <div class="how-inner">
+    <div class="how-header reveal">
+      <div class="section-label">How it works</div>
+      <h2>Three steps to wardrobe clarity</h2>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <div class="step-num">01</div>
+        <h3>Upload You</h3>
+        <p>One full-length mirror selfie. That's the anchor. The AI learns your proportions, your shape, your reality.</p>
+      </div>
+      <div class="step reveal">
+        <div class="step-num">02</div>
+        <h3>Snap Your Clothes</h3>
+        <p>Open your closet and start snapping. No sorting, no categories. The AI organizes everything in the background.</p>
+      </div>
+      <div class="step reveal">
+        <div class="step-num">03</div>
+        <h3>See It On You</h3>
+        <p>Tap generate. See AI-styled outfits rendered on your body. Discover combinations you never would have tried.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="belief-section">
+  <div class="belief-inner reveal">
+    <div class="section-label">This isn't about fashion</div>
+    <h2>It was never about needing <em>more</em>.<br>It was about getting <em>yourself</em> back.</h2>
+    <p class="belief-subtitle">The real cost of "nothing to wear" isn't the clothes. It's the confidence, the energy, and the identity you lose every morning before your day even starts.</p>
+    <div class="belief-grid">
+      <div class="belief-col">
+        <h4>The daily drain</h4>
+        <ul>
+          <li>"I have nothing to wear" — again</li>
+          <li>Buy more, feel nothing different</li>
+          <li>Scrolling inspo that mocks your closet</li>
+          <li>Packing your whole life for a weekend trip</li>
+          <li>Starting the day already behind</li>
+          <li>Losing yourself in sweatpants</li>
+        </ul>
+      </div>
+      <div class="belief-divider"></div>
+      <div class="belief-col">
+        <h4>Your morning reset</h4>
+        <ul>
+          <li>"I see exactly what works on me"</li>
+          <li>Shop intentionally — if at all</li>
+          <li>Your own body is the inspiration</li>
+          <li>Pack a carry-on with total confidence</li>
+          <li>Dressed and certain in 30 seconds</li>
+          <li>Feeling like yourself again</li>
+        </ul>
+      </div>
+    </div>
+    <div class="belief-bottom">
+      <p>Not fashion advice. Not style quizzes. Not another subscription box.<br>Visual certainty. Identity restored. Before breakfast.</p>
+    </div>
+  </div>
+</section>
+
+<section class="stylematch-section">
+  <div class="stylematch-inner">
+    <div class="stylematch-copy reveal">
+      <div class="section-label">Style Match</div>
+      <h2>That girl's outfit?<br>You already own <em>most of it</em>.</h2>
+      <p>See someone on Instagram looking incredible? Screenshot it. Upload it. The AI decodes every piece she's wearing and <strong>matches it to your closet</strong>.</p>
+      <p>You'll see what you already own that gets you 80% there — and if one piece would complete the look, we'll show you exactly what to add.</p>
+      <p><strong>Your closet is fuller than you think.</strong></p>
+    </div>
+    <div class="stylematch-visual reveal">
+      <div class="stylematch-flow">
+        <div class="sm-step">
+          <div class="sm-icon">&#128248;</div>
+          <div class="sm-text">Screenshot an outfit you love<span>From Instagram, Pinterest, anywhere</span></div>
+        </div>
+        <div class="sm-connector"></div>
+        <div class="sm-step">
+          <div class="sm-icon">&#128269;</div>
+          <div class="sm-text">AI decodes every piece<span>Blazer, white tank, low-rise jeans, pointed heels</span></div>
+        </div>
+        <div class="sm-connector"></div>
+        <div class="sm-step">
+          <div class="sm-icon">&#128087;</div>
+          <div class="sm-text">Matched to your closet<span>"You own 3 of 4 pieces — 78% match"</span></div>
+        </div>
+        <div class="sm-connector"></div>
+        <div class="sm-step">
+          <div class="sm-icon">&#127919;</div>
+          <div class="sm-text">See the outfit on you<span>Your version, on your body, right now</span></div>
+        </div>
+        <div class="sm-result">
+          <div class="sm-result-icon">&#10024;</div>
+          <div class="sm-result-text">One piece away from the full look<span>We'll show you exactly what to add</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="proof-section">
+  <div class="proof-inner">
+    <div class="reveal">
+      <div class="section-label">What women are saying</div>
+      <h2>Wardrobe clarity changes everything</h2>
+    </div>
+    <div class="testimonials">
+      <div class="testimonial reveal">
+        <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p>"I literally wore the same 5 outfits on rotation. Now I have combinations I never would have put together — and they actually look amazing on me."</p>
+        <div class="testimonial-author">Sarah M.</div>
+        <div class="testimonial-meta">Working mom, 38</div>
+      </div>
+      <div class="testimonial reveal">
+        <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p>"I was about to do a massive closet purge. Turns out I had incredible outfits hiding in there. I just couldn't see them."</p>
+        <div class="testimonial-author">Rachel T.</div>
+        <div class="testimonial-meta">Entrepreneur, 42</div>
+      </div>
+      <div class="testimonial reveal">
+        <div class="testimonial-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+        <p>"Packed for a 2-week Europe trip with a carry-on. Looked put together every single day. This replaced my stylist."</p>
+        <div class="testimonial-author">Danielle K.</div>
+        <div class="testimonial-meta">Frequent traveler, 36</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="final-cta" id="start">
+  <div class="final-inner reveal">
+    <div class="section-label">Your morning reset starts here</div>
+    <h2>You don't need <em>fashion advice</em>.<br>You need visual certainty.</h2>
+    <p class="hero-sub">Your body. Your clothes. Your clarity. 30 seconds to dressed and confident. No stylist needed. No new wardrobe required.</p>
+    <a href="#" class="cta-btn">Start Now <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></a>
+    <p class="trust-line">Join women who finally see their wardrobe clearly.</p>
+  </div>
+</section>
+
+<footer>
+  <p>&copy; 2026 NothingToWear.ai &mdash; All rights reserved.</p>
+  <p><a href="#">Privacy</a> &nbsp;&middot;&nbsp; <a href="#">Terms</a></p>
+</footer>
+
+<script>
+const nav=document.getElementById('nav');
+window.addEventListener('scroll',()=>{nav.classList.toggle('scrolled',window.scrollY>60)});
+const reveals=document.querySelectorAll('.reveal');
+const observer=new IntersectionObserver((entries)=>{entries.forEach((entry,i)=>{if(entry.isIntersecting){setTimeout(()=>entry.target.classList.add('visible'),i*80);observer.unobserve(entry.target)}})},{threshold:0.12,rootMargin:'0px 0px -30px 0px'});
+reveals.forEach(el=>observer.observe(el));
+document.querySelectorAll('a[href^="#"]').forEach(a=>{a.addEventListener('click',e=>{e.preventDefault();const target=document.querySelector(a.getAttribute('href'));if(target)target.scrollIntoView({behavior:'smooth',block:'start'})})});
+</script>
+</body>
+</html>
