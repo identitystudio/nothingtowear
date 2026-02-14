@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
-import { getAllImagesFromDB } from "@/lib/closet-db";
+import { getAllImagesFromSupabase } from "@/lib/supabase-storage";
 
 interface ClothingItem {
   id: string;
@@ -25,6 +25,7 @@ interface Outfit {
   tryOnPassed?: boolean;
   tryOnScore?: number;
   tryOnChecking?: boolean;
+  analysisResult?: string;
 }
 
 const FREE_REVEAL_LIMIT = 3;
@@ -111,6 +112,15 @@ export default function OutfitsPage() {
   // Item type correction popup
   const [correctingItem, setCorrectingItem] = useState<ClothingItem | null>(null);
 
+  // Copy feedback
+  const [copiedOutfitId, setCopiedOutfitId] = useState<string | null>(null);
+
+  // Ref for capturing flat-lay board
+  const flatlayRef = useRef<HTMLDivElement>(null);
+
+  // Track which outfits need pipeline processing
+  const [pendingPipelineOutfits, setPendingPipelineOutfits] = useState<string[]>([]);
+
   useEffect(() => {
     const savedBodyPhoto = localStorage.getItem("bodyPhoto");
     if (!savedBodyPhoto) {
@@ -146,9 +156,9 @@ export default function OutfitsPage() {
         return;
       }
 
-      console.log("[Outfits] Loading images from IndexedDB...");
-      const imageMap = await getAllImagesFromDB();
-      console.log(`[Outfits] Loaded ${imageMap.size} images from IndexedDB`);
+      console.log("[Outfits] Loading images from Supabase Storage...");
+      const imageMap = await getAllImagesFromSupabase();
+      console.log(`[Outfits] Loaded ${imageMap.size} images from Supabase Storage`);
 
       const items: ClothingItem[] = [];
       for (const m of meta) {
@@ -173,6 +183,40 @@ export default function OutfitsPage() {
 
     loadClosetItems();
   }, [router]);
+
+  // Process pending pipelines once DOM is ready
+  useEffect(() => {
+    if (pendingPipelineOutfits.length === 0 || generatedOutfits.length === 0) return;
+
+    const currentOutfit = generatedOutfits[currentOutfitIndex];
+    if (!currentOutfit) return;
+
+    const currentOutfitId = currentOutfit.id;
+    if (!pendingPipelineOutfits.includes(currentOutfitId)) return;
+
+    // Wait for DOM to be fully rendered
+    const timer = setTimeout(async () => {
+      console.log(`[Outfits] Processing pending pipeline for ${currentOutfitId}`);
+      
+      // Check if flatlay ref is available
+      if (!flatlayRef.current) {
+        console.warn(`[Outfits] Flatlay ref not yet available, scheduling retry...`);
+        // Retry after a short delay
+        setTimeout(() => {
+          setPendingPipelineOutfits((prev) => prev.includes(currentOutfitId) ? prev : []);
+        }, 500);
+        return;
+      }
+
+      // Run the pipeline
+      await runTryOnPipeline(currentOutfitId, "");
+      
+      // Remove from pending list and process next
+      setPendingPipelineOutfits((prev) => prev.filter((id) => id !== currentOutfitId));
+    }, 100);
+
+    return () => clearTimeout(timer);
+  }, [pendingPipelineOutfits, generatedOutfits, currentOutfitIndex]);
 
   const shuffle = <T,>(arr: T[]): T[] => {
     const shuffled = [...arr];
@@ -282,6 +326,10 @@ export default function OutfitsPage() {
   const compressForTryOn = (dataUrl: string, maxSize = 768): Promise<string> => {
     return new Promise((resolve) => {
       const img = new window.Image();
+      
+      // Set crossOrigin before setting src to avoid CORS taint
+      img.crossOrigin = "anonymous";
+      
       img.onload = () => {
         const canvas = document.createElement("canvas");
         let w = img.naturalWidth;
@@ -302,87 +350,180 @@ export default function OutfitsPage() {
     });
   };
 
-  // ── Tier 3 Pipeline ──
+  // Capture flat-lay board as image for webhook
+  const captureFlatlayBoard = async (): Promise<string> => {
+    if (!flatlayRef.current) throw new Error("Flatlay ref not available");
+
+    try {
+      // Dynamically import html2canvas
+      const html2canvas = (await import("html2canvas")).default;
+      
+      const canvas = await html2canvas(flatlayRef.current, {
+        backgroundColor: "#f9f7f2",
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        imageTimeout: 10000,
+      });
+
+      return canvas.toDataURL("image/jpeg", 0.9);
+    } catch (err) {
+      console.error("[Outfits] Failed to capture flatlay board:", err);
+      throw err;
+    }
+  };
+
+  // Parse and format analysis response
+  const formatAnalysisResponse = (data: unknown): string => {
+    try {
+      if (typeof data === "string") {
+        // If it's already a string, try to parse it as JSON
+        try {
+          const parsed = JSON.parse(data);
+          return formatAnalysisObject(parsed);
+        } catch {
+          // If not JSON, return as-is
+          return data;
+        }
+      }
+      
+      if (data && typeof data === "object") {
+        return formatAnalysisObject(data);
+      }
+      
+      return JSON.stringify(data, null, 2);
+    } catch (err) {
+      return String(data);
+    }
+  };
+
+  // Format analysis object/array recursively
+  const formatAnalysisObject = (obj: unknown, depth = 0): string => {
+    const indent = "  ".repeat(depth);
+    const lines: string[] = [];
+
+    if (Array.isArray(obj)) {
+      obj.forEach((item, idx) => {
+        if (typeof item === "object" && item !== null) {
+          lines.push(`${indent}${idx + 1}.`);
+          lines.push(formatAnalysisObject(item, depth + 1));
+        } else {
+          lines.push(`${indent}• ${item}`);
+        }
+      });
+    } else if (obj && typeof obj === "object") {
+      const entries = Object.entries(obj);
+      entries.forEach(([key, value], idx) => {
+        // Format key nicely
+        const formattedKey = key
+          .replace(/_/g, " ")
+          .replace(/^./, (c) => c.toUpperCase());
+
+        if (value === null || value === undefined) {
+          lines.push(`${indent}${formattedKey}: -`);
+        } else if (Array.isArray(value)) {
+          if (value.length === 0) {
+            lines.push(`${indent}${formattedKey}: none`);
+          } else {
+            lines.push(`${indent}${formattedKey}:`);
+            lines.push(formatAnalysisObject(value, depth + 1));
+          }
+        } else if (typeof value === "object") {
+          lines.push(`${indent}${formattedKey}:`);
+          lines.push(formatAnalysisObject(value, depth + 1));
+        } else {
+          lines.push(`${indent}${formattedKey}: ${value}`);
+        }
+      });
+    }
+
+    return lines.join("\n");
+  };
+
+  // ── Send to Webhook for Analysis ──
   const runTryOnPipeline = async (
     outfitId: string,
-    bodyImg: string,
-    garmentImg: string
+    boardImage: string
   ) => {
-    console.log(`[Outfits] Starting try-on pipeline for outfit ${outfitId}`);
+    console.log(`[Outfits] 🎬 Starting analysis pipeline for outfit ${outfitId}`);
+    
     try {
-      // Compress images for faster upload and better model performance
-      console.log("[Outfits] Compressing images for try-on...");
-      const [compressedBody, compressedGarment] = await Promise.all([
-        compressForTryOn(bodyImg),
-        compressForTryOn(garmentImg),
-      ]);
-      console.log(`[Outfits] Compressed — body: ${(compressedBody.length / 1024).toFixed(0)}KB, garment: ${(compressedGarment.length / 1024).toFixed(0)}KB`);
+      console.log("[Outfits] 📸 Capturing flat-lay board...");
+      const flatlayImage = await captureFlatlayBoard();
+      console.log(`[Outfits] ✓ Captured flat-lay board: ${(flatlayImage.length / 1024).toFixed(0)}KB`);
 
-      console.log("[Outfits] Calling /api/generate-outfit...");
-      const renderRes = await fetch("/api/generate-outfit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bodyPhoto: compressedBody, clothingItem: compressedGarment }),
-      });
-
-      if (!renderRes.ok) {
-        const errData = await renderRes.json().catch(() => ({}));
-        throw new Error(errData.error || "Render failed");
+      console.log("[Outfits] 🚀 SENDING TO WEBHOOK...");
+      console.log("[Outfits] 📡 Endpoint: https://themacularprogram.app.n8n.cloud/webhook/analyze-clothes2");
+      
+      // Create FormData for webhook request
+      const formData = new FormData();
+      
+      // Convert data URL to blob
+      const arr = flatlayImage.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const bstr = atob(arr[1]);
+      const n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      for (let i = 0; i < n; i++) {
+        u8arr[i] = bstr.charCodeAt(i);
       }
+      const blob = new Blob([u8arr], { type: mime });
+      
+      formData.append("Compiled_Clothes", blob, "outfit.jpg");
 
-      const renderData = await renderRes.json();
-      console.log(`[Outfits] API response:`, JSON.stringify(renderData).substring(0, 200));
-
-      let imageUrl: string | undefined;
-      if (typeof renderData.result === "string") imageUrl = renderData.result;
-      else if (Array.isArray(renderData.result) && renderData.result.length > 0)
-        imageUrl = typeof renderData.result[0] === "string" ? renderData.result[0] : String(renderData.result[0]);
-      else if (renderData.result?.output) imageUrl = renderData.result.output;
-      else if (renderData.output) imageUrl = renderData.output;
-
-      if (!imageUrl) throw new Error(`No image returned — raw: ${JSON.stringify(renderData).substring(0, 300)}`);
-      console.log(`[Outfits] Render complete for ${outfitId}: ${imageUrl.substring(0, 80)}...`);
-
-      setGeneratedOutfits((prev) =>
-        prev.map((o) =>
-          o.id === outfitId
-            ? { ...o, tryOnImage: imageUrl, tryOnLoading: false, tryOnChecking: true }
-            : o
-        )
+      const webhookRes = await fetch(
+        "https://themacularprogram.app.n8n.cloud/webhook/analyze-clothes2",
+        {
+          method: "POST",
+          body: formData,
+        }
       );
 
-      console.log("[Outfits] Running quality check...");
-      const qualityRes = await fetch("/api/check-render-quality", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ renderImageUrl: imageUrl }),
-      });
-
-      let passed = false;
-      let score = 0;
-      if (qualityRes.ok) {
-        const qd = await qualityRes.json();
-        passed = qd.pass === true;
-        score = qd.score || 0;
-        console.log(`[Outfits] Quality: score=${score}, passed=${passed}`);
-      } else {
-        console.warn(`[Outfits] Quality check failed: ${qualityRes.status}`);
+      if (!webhookRes.ok) {
+        const errText = await webhookRes.text();
+        console.error("[Outfits] ❌ Webhook error:", errText);
+        throw new Error(`Webhook returned ${webhookRes.status}: ${errText}`);
       }
+
+      const analysisData = await webhookRes.json();
+      console.log(`[Outfits] ✅ Webhook response received!`);
+      console.log(`[Outfits] 📦 Analysis result:`, JSON.stringify(analysisData).substring(0, 300));
+
+      // Format the analysis response
+      const analysisText = formatAnalysisResponse(analysisData);
+      console.log(`[Outfits] 📋 Formatted analysis preview:`, analysisText.substring(0, 200));
+
+      // Add prompt instruction at the bottom
+      const fullAnalysisText = analysisText + "\n\n---\n\nUsing the exact facial structure, eyes, eyebrows, nose, mouth, ears, hair, skin tone, facial proportions, expression lines, natural asymmetries, and all visible skin details, together with the exact clothing structure, fabric texture, stitching details, colors, patterns, proportions, fit, wrinkles, folds, wear marks, logos, accessories, and all visible garment characteristics from the reference image — without any alteration, enhancement, redesign, beautification, stylization, or modification of any kind.";
+
+      console.log(`[Outfits] 🎉 Analysis complete!`);
 
       setGeneratedOutfits((prev) =>
         prev.map((o) =>
           o.id === outfitId
-            ? { ...o, tryOnPassed: passed, tryOnScore: score, tryOnChecking: false }
+            ? { 
+                ...o, 
+                tryOnImage: "webhook_analyzed",
+                tryOnLoading: false, 
+                tryOnPassed: true,
+                analysisResult: fullAnalysisText
+              }
             : o
         )
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Try-on failed";
+      const message = err instanceof Error ? err.message : "Analysis failed";
       console.error(`[Outfits] Pipeline error for ${outfitId}:`, err);
       setGeneratedOutfits((prev) =>
         prev.map((o) =>
           o.id === outfitId
-            ? { ...o, tryOnError: message, tryOnLoading: false, tryOnChecking: false }
+            ? { 
+                ...o, 
+                tryOnError: message, 
+                tryOnLoading: false, 
+                tryOnChecking: false,
+                analysisResult: `Error: ${message}`
+              }
             : o
         )
       );
@@ -467,14 +608,8 @@ export default function OutfitsPage() {
     setRevealedOutfitIds(new Set());
     setIsGenerating(false);
 
-    // Stagger pipelines to avoid Replicate 429 rate limit (burst=1 on low credit)
-    console.log(`[Outfits] Launching ${outfits.length} try-on pipelines (staggered)...`);
-    (async () => {
-      for (const outfit of outfits) {
-        await runTryOnPipeline(outfit.id, bodyPhoto, outfit.items[0].image);
-        await new Promise((r) => setTimeout(r, 3000));
-      }
-    })();
+    // Mark all outfits for pipeline processing (will be triggered by useEffect)
+    setPendingPipelineOutfits(outfits.map((o) => o.id));
   };
 
   const handleRevealTryOn = (outfitId: string) => {
@@ -493,15 +628,22 @@ export default function OutfitsPage() {
   };
 
   const handleRetryTryOn = (outfit: Outfit) => {
-    if (!bodyPhoto) return;
     setGeneratedOutfits((prev) =>
       prev.map((o) =>
         o.id === outfit.id
-          ? { ...o, tryOnLoading: true, tryOnError: undefined, tryOnImage: undefined, tryOnPassed: undefined, tryOnScore: undefined, tryOnChecking: false }
+          ? { ...o, tryOnLoading: true, tryOnError: undefined, tryOnImage: undefined, tryOnPassed: undefined, tryOnScore: undefined, tryOnChecking: false, analysisResult: undefined }
           : o
       )
     );
-    runTryOnPipeline(outfit.id, bodyPhoto, outfit.items[0].image);
+    runTryOnPipeline(outfit.id, "");
+  };
+
+  const handleCopyAnalysis = (outfitId: string, text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedOutfitId(outfitId);
+      setTimeout(() => setCopiedOutfitId(null), 2000);
+    });
   };
 
   const handleCorrectItemType = (itemId: string, newType: ClothingItem["type"]) => {
@@ -732,7 +874,7 @@ export default function OutfitsPage() {
             {/* ══════ OUTFIT RESULTS ══════ */}
 
             {/* Carousel nav — arrows + dots */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", marginBottom: "1.5rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", marginBottom: "1.5rem", paddingTop: "2rem" }}>
               <button onClick={handlePrevOutfit} style={{ width: 44, height: 44, borderRadius: "50%", background: "var(--warm-white)", border: "1px solid rgba(196,168,130,0.2)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                 <svg style={{ width: 18, height: 18, color: "var(--charcoal)" }} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
               </button>
@@ -761,13 +903,13 @@ export default function OutfitsPage() {
               </button>
             </div>
 
-            {/* ── Two Panels: Tier 1 Board + Tier 3 Try-On ── */}
-            <div style={{ display: "grid", gridTemplateColumns: tryOnReady || tryOnRendering ? "1fr 1fr" : "1fr", gap: "1.5rem", maxWidth: tryOnReady || tryOnRendering ? 960 : 520, margin: "0 auto 1.5rem", transition: "all 0.5s ease" }}>
+            {/* ── Two Panels: Tier 1 Board + Analysis Result ── */}
+            <div style={{ display: "grid", gridTemplateColumns: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult ? "1fr 1fr" : "1fr", gap: "1.5rem", maxWidth: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult ? 960 : 520, margin: "0 auto 1.5rem", transition: "all 0.5s ease" }}>
 
               {/* ═══ TIER 1: Flat-Lay Board ═══ */}
               <div style={{ borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", border: "1px solid rgba(196,168,130,0.15)" }}>
                 {/* Flat-lay composition — NO text overlay */}
-                <div style={{ position: "relative", aspectRatio: "4/5", background: "linear-gradient(165deg, var(--cream) 0%, #f5efe8 50%, #ede5db 100%)", overflow: "hidden" }}>
+                <div ref={flatlayRef} style={{ position: "relative", aspectRatio: "4/5", background: "linear-gradient(165deg, var(--cream) 0%, #f5efe8 50%, #ede5db 100%)", overflow: "hidden" }}>
                   <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 30% 20%, rgba(196,168,130,0.06) 0%, transparent 60%)", zIndex: 0 }} />
                   {currentOutfit?.items.map((item, idx) => {
                     const positions = getFlatlayPositions(currentOutfit.items.length);
@@ -878,49 +1020,69 @@ export default function OutfitsPage() {
                 </div>
               </div>
 
-              {/* ═══ TIER 3: Try-On Preview ═══ */}
-              {(tryOnReady || tryOnRendering) && (
-                <div style={{ border: "1px solid rgba(196,168,130,0.15)", borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", animation: "fadeInUp 0.5s ease" }}>
-                  <p style={{ fontFamily: "var(--sans)", fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const, color: "var(--soft-gray)", padding: "1.2rem 1.5rem 0", textAlign: "center" }}>On Your Body</p>
-
-                  <div onClick={() => tryOnReady && currentOutfit && handleRevealTryOn(currentOutfit.id)} style={{ position: "relative", aspectRatio: "4/5", background: "var(--cream)", overflow: "hidden", cursor: tryOnReady && !isRevealed ? "pointer" : "default", margin: "0.8rem 1.5rem 1.5rem" , borderRadius: 12 }}>
-                    {currentOutfit?.tryOnImage && (
-                      <Image src={currentOutfit.tryOnImage} alt="Virtual try-on" fill className="object-contain" unoptimized style={{ filter: isRevealed || isPremium ? "blur(0px)" : "blur(20px)", transition: "filter 0.8s ease" }} />
-                    )}
-
-                    {tryOnRendering && (
-                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "var(--cream)" }}>
-                        <div style={{ textAlign: "center" }}>
-                          <div style={{ width: 40, height: 40, borderRadius: "50%", border: "2px solid var(--tan-light)", borderTopColor: "var(--tan)", animation: "spin 1s linear infinite", margin: "0 auto 1rem" }} />
-                          <p style={{ fontFamily: "var(--serif)", fontSize: "1.1rem", fontWeight: 500, fontStyle: "italic", color: "var(--charcoal)", marginBottom: "0.3rem" }}>
-                            {currentOutfit?.tryOnChecking ? "Verifying quality..." : "Rendering on your body..."}
-                          </p>
-                          <p style={{ fontFamily: "var(--sans)", fontSize: "0.85rem", fontWeight: 400, color: "var(--soft-gray)" }}>20&ndash;40 seconds</p>
-                        </div>
-                      </div>
-                    )}
-
-                    {tryOnReady && !isRevealed && !isPremium && (
-                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(42,37,32,0.15)" }}>
-                        <div style={{ textAlign: "center", padding: "0 1.5rem" }}>
-                          <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(255,255,255,0.9)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 1rem", boxShadow: "0 4px 20px rgba(42,37,32,0.15)" }}>
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--charcoal)" strokeWidth="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
-                          </div>
-                          <p style={{ fontFamily: "var(--serif)", fontSize: "1.2rem", fontWeight: 500, fontStyle: "italic", color: "var(--charcoal)", marginBottom: "0.4rem", textShadow: "0 1px 4px rgba(255,255,255,0.6)" }}>See this outfit on me</p>
-                          <p style={{ fontFamily: "var(--sans)", fontSize: "0.85rem", fontWeight: 500, color: "var(--warm-gray)", textShadow: "0 1px 4px rgba(255,255,255,0.6)" }}>
-                            {freeRevealsLeft > 0 ? `${freeRevealsLeft} free reveal${freeRevealsLeft === 1 ? "" : "s"} left` : "Tap to upgrade"}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-
-                    {(isRevealed || isPremium) && currentOutfit?.tryOnImage && !tryOnRendering && (
-                      <div style={{ position: "absolute", bottom: 12, right: 12, background: "rgba(255,255,255,0.85)", backdropFilter: "blur(8px)", borderRadius: 100, padding: "0.35rem 0.8rem", display: "flex", alignItems: "center", gap: "0.3rem", zIndex: 10 }}>
-                        <span style={{ color: "#7ea67e", fontSize: "0.75rem" }}>&#10003;</span>
-                        <span style={{ fontFamily: "var(--sans)", fontSize: "0.7rem", fontWeight: 500, color: "var(--warm-gray)" }}>Quality verified</span>
-                      </div>
+              {/* ═══ Analysis Result Panel (Right Side) ═══ */}
+              {(currentOutfit?.tryOnLoading || currentOutfit?.analysisResult) && (
+                <div style={{ border: "1px solid rgba(196,168,130,0.15)", borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", animation: "fadeInUp 0.5s ease", display: "flex", flexDirection: "column" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem 0.6rem" }}>
+                    <p style={{ fontFamily: "var(--sans)", fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const, color: "var(--soft-gray)" }}>Outfit Analysis</p>
+                    {currentOutfit?.analysisResult && (
+                      <button
+                        onClick={() => currentOutfit && handleCopyAnalysis(currentOutfit.id, currentOutfit.analysisResult || "")}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          fontFamily: "var(--sans)",
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                          color: copiedOutfitId === currentOutfit?.id ? "var(--tan)" : "var(--soft-gray)",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          transition: "color 0.3s ease",
+                        }}
+                        title="Copy analysis to clipboard"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+                          <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+                        </svg>
+                        {copiedOutfitId === currentOutfit?.id ? "Copied!" : "Copy"}
+                      </button>
                     )}
                   </div>
+
+                  {currentOutfit?.tryOnLoading ? (
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1.5rem" }}>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ width: 48, height: 48, borderRadius: "50%", border: "2px solid var(--tan-light)", borderTopColor: "var(--tan)", animation: "spin 1s linear infinite", margin: "0 auto 1.2rem" }} />
+                        <p style={{ fontFamily: "var(--serif)", fontSize: "1.1rem", fontWeight: 500, fontStyle: "italic", color: "var(--charcoal)", marginBottom: "0.4rem" }}>
+                          Analyzing outfit...
+                        </p>
+                        <p style={{ fontFamily: "var(--sans)", fontSize: "0.85rem", fontWeight: 400, color: "var(--soft-gray)" }}>
+                          Parsing webhook response...
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <textarea
+                      value={currentOutfit.analysisResult || ""}
+                      readOnly
+                      style={{
+                        flex: 1,
+                        padding: "1.2rem 1.5rem",
+                        border: "none",
+                        background: "var(--warm-white)",
+                        fontFamily: "var(--sans)",
+                        fontSize: "0.85rem",
+                        fontWeight: 400,
+                        color: "var(--charcoal)",
+                        outline: "none",
+                        resize: "none",
+                        lineHeight: 1.6,
+                      }}
+                    />
+                  )}
                 </div>
               )}
             </div>

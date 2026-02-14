@@ -3,14 +3,22 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { saveImageToDB, clearAllImagesFromDB } from "@/lib/closet-db";
+import { toast } from "sonner";
+import { saveImageToSupabase, clearAllImagesFromSupabase, deleteImageFromSupabase, getAllImagesFromSupabase } from "@/lib/supabase-storage";
 
 interface ClothingItemMeta {
   id: string;
   type?: string;
 }
 
+interface ClosetItem {
+  id: string;
+  type?: string;
+  imageUrl: string;
+}
+
 const BATCH_SIZE = 15;
+const ENABLE_AI_DETECTION = true; // Now using Gemini API as fallback when OpenAI quota is exceeded
 
 export default function ClosetPage() {
   const router = useRouter();
@@ -18,6 +26,11 @@ export default function ClosetPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processCount, setProcessCount] = useState({ done: 0, total: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [closetItems, setClosetItems] = useState<ClosetItem[]>([]);
+  const [isLoadingItems, setIsLoadingItems] = useState(false);
+  const [editingItem, setEditingItem] = useState<ClosetItem | null>(null);
+  const [editingType, setEditingType] = useState<string>("");
+  const [isItemsCollapsed, setIsItemsCollapsed] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -33,12 +46,85 @@ export default function ClosetPage() {
       const meta: ClothingItemMeta[] = JSON.parse(savedMeta);
       setItemCount(meta.length);
       console.log(`[Closet] ${meta.length} items in closet`);
+      // Load items with images
+      loadClosetItems(meta);
     } else if (legacyItems) {
       const legacy = JSON.parse(legacyItems);
       setItemCount(legacy.length);
       console.log(`[Closet] ${legacy.length} items (legacy format)`);
     }
   }, [router]);
+
+  const loadClosetItems = async (meta: ClothingItemMeta[]) => {
+    setIsLoadingItems(true);
+    try {
+      const imageMap = await getAllImagesFromSupabase();
+      const items: ClosetItem[] = meta
+        .filter(m => imageMap.has(m.id))
+        .map(m => ({
+          id: m.id,
+          type: m.type,
+          imageUrl: imageMap.get(m.id) || ""
+        }));
+      setClosetItems(items);
+    } catch (err) {
+      console.error("Error loading closet items:", err);
+    } finally {
+      setIsLoadingItems(false);
+    }
+  };
+
+  const handleDeleteItem = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this item?")) return;
+    
+    try {
+      // Delete from Supabase Storage
+      await deleteImageFromSupabase(id);
+      
+      // Update localStorage metadata
+      const savedMeta = localStorage.getItem("closetItemsMeta");
+      if (savedMeta) {
+        const meta: ClothingItemMeta[] = JSON.parse(savedMeta);
+        const updatedMeta = meta.filter(m => m.id !== id);
+        localStorage.setItem("closetItemsMeta", JSON.stringify(updatedMeta));
+        setItemCount(updatedMeta.length);
+      }
+      
+      // Update UI
+      setClosetItems(items => items.filter(item => item.id !== id));
+      toast.success("Item deleted");
+    } catch (err) {
+      console.error("Error deleting item:", err);
+      toast.error("Failed to delete item");
+    }
+  };
+
+  const handleUpdateItem = async () => {
+    if (!editingItem) return;
+    
+    try {
+      const savedMeta = localStorage.getItem("closetItemsMeta");
+      if (savedMeta) {
+        const meta: ClothingItemMeta[] = JSON.parse(savedMeta);
+        const updatedMeta = meta.map(m => 
+          m.id === editingItem.id ? { ...m, type: editingType } : m
+        );
+        localStorage.setItem("closetItemsMeta", JSON.stringify(updatedMeta));
+      }
+      
+      setClosetItems(items => 
+        items.map(item => 
+          item.id === editingItem.id ? { ...item, type: editingType } : item
+        )
+      );
+      
+      toast.success("Item updated");
+      setEditingItem(null);
+    } catch (err) {
+      console.error("Error updating item:", err);
+      toast.error("Failed to update item");
+    }
+  };
 
   // Normalize image: auto-correct EXIF rotation and resize
   const normalizeImage = (
@@ -94,6 +180,13 @@ export default function ClosetPage() {
       if (imageFiles.length === 0) return;
 
       console.log(`[Closet] Processing ${imageFiles.length} image files...`);
+      
+      if (!ENABLE_AI_DETECTION) {
+        console.log(`[Closet] ℹ️  AI detection is disabled.`);
+      } else {
+        console.log(`[Closet] ℹ️  AI detection enabled (OpenAI with Gemini fallback)`);
+      }
+      
       setIsProcessing(true);
       setProcessCount({ done: 0, total: imageFiles.length });
 
@@ -134,28 +227,55 @@ export default function ClosetPage() {
             const imageData = await normalizeImage(rawData, 1024, file.name);
             const id = `${Date.now()}-${globalIndex}`;
 
-            await saveImageToDB(id, imageData);
+            // Upload to Supabase Storage and get public URL
+            const publicUrl = await saveImageToSupabase(id, imageData);
 
             // Detect item type via GPT-4o Vision
             let detectedType: string | undefined;
-            try {
-              const detectRes = await fetch("/api/detect-item", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image: imageData }),
-              });
-              if (detectRes.ok) {
-                const detectData = await detectRes.json();
-                detectedType = detectData.item?.type;
-                console.log(`[Closet] AI detected: ${file.name} → ${detectedType} (${detectData.item?.color || "?"}, ${detectData.item?.style || "?"})`);
-              } else {
-                console.warn(`[Closet] Detection failed for ${file.name}: ${detectRes.status}`);
+            
+            if (ENABLE_AI_DETECTION) {
+              try {
+                // Add delay between requests to avoid rate limits (1 per second)
+                if (globalIndex > 0) {
+                  await new Promise(r => setTimeout(r, 1000));
+                }
+                
+                const detectRes = await fetch("/api/detect-item", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ image: imageData }),
+                });
+                
+                if (detectRes.ok) {
+                  const detectData = await detectRes.json();
+                  detectedType = detectData.item?.type;
+                  const provider = detectData.provider || "ai";
+                  console.log(`[Closet] ✓ AI detected (${provider}): ${file.name} → ${detectedType} (${detectData.item?.color || "?"}, ${detectData.item?.style || "?"})`);
+                } else if (detectRes.status === 402) {
+                  // Insufficient credits error
+                  const errorData = await detectRes.json();
+                  toast.error("Insufficient OpenAI credits to process more items");
+                  console.warn(`[Closet] ⚠ Insufficient OpenAI credits - stopping detection`);
+                  break; // Stop processing on insufficient credits
+                } else if (detectRes.status === 429) {
+                  console.warn(`[Closet] ⏸ Rate limit hit - skipping detection for ${file.name}`);
+                } else {
+                  console.warn(`[Closet] ⚠ Detection failed for ${file.name}: ${detectRes.status}`);
+                }
+              } catch (detectErr) {
+                console.warn(`[Closet] ⚠ Detection error for ${file.name}:`, detectErr);
               }
-            } catch (detectErr) {
-              console.warn(`[Closet] Detection error for ${file.name}:`, detectErr);
             }
 
             newMeta.push({ id, type: detectedType });
+            
+            // Add to closetItems for immediate display
+            setClosetItems(prev => [...prev, {
+              id,
+              type: detectedType,
+              imageUrl: publicUrl
+            }]);
+            
             processed++;
             console.log(
               `[Closet] ✓ ${globalIndex + 1}/${imageFiles.length} — ${file.name} → ${detectedType || "undetected"} (${(imageData.length / 1024).toFixed(0)}KB)`
@@ -228,10 +348,11 @@ export default function ClosetPage() {
 
   const handleClearCloset = async () => {
     console.log("[Closet] Clearing all items");
-    await clearAllImagesFromDB();
+    await clearAllImagesFromSupabase();
     localStorage.removeItem("closetItemsMeta");
     localStorage.removeItem("closetItems");
     setItemCount(0);
+    setClosetItems([]);
   };
 
   const handleGenerateOutfits = () => {
@@ -631,7 +752,307 @@ export default function ClosetPage() {
           />
         </div>
 
-        {/* ═══ Generate Outfits CTA ═══ */}
+        {/* ═══ Items Gallery ═══ */}
+        {itemCount > 0 && !isProcessing && !isLoadingItems && closetItems.length > 0 && (
+          <div style={{ marginBottom: "3rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "1rem", marginBottom: "1.5rem" }}>
+              <h2
+                style={{
+                  fontFamily: "var(--serif)",
+                  fontSize: "1.3rem",
+                  fontWeight: 400,
+                  color: "var(--charcoal)",
+                  margin: 0,
+                }}
+              >
+                Your Items
+              </h2>
+              <button
+                onClick={() => setIsItemsCollapsed(!isItemsCollapsed)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  fontFamily: "var(--sans)",
+                  fontSize: "0.9rem",
+                  fontWeight: 500,
+                  color: "var(--tan)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "0.4rem",
+                  transition: "color 0.3s ease",
+                  padding: "0.5rem 1rem",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = "var(--tan-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = "var(--tan)";
+                }}
+                title={isItemsCollapsed ? "Expand items" : "Collapse items"}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transition: "transform 0.3s ease", transform: isItemsCollapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+            </div>
+            
+            {!isItemsCollapsed && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+                  gap: "1.2rem",
+                  animation: "fadeIn 0.3s ease",
+                }}
+              >
+              {closetItems.map(item => (
+                <div
+                  key={item.id}
+                  style={{
+                    position: "relative",
+                    borderRadius: 12,
+                    overflow: "hidden",
+                    background: "var(--cream)",
+                    border: "1px solid rgba(196,168,130,0.12)",
+                    transition: "all 0.3s ease",
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.boxShadow = "none";
+                  }}
+                >
+                  {/* Item Image */}
+                  <img
+                    src={item.imageUrl}
+                    alt={`Clothing item ${item.type || "unknown"}`}
+                    style={{
+                      width: "100%",
+                      height: 160,
+                      objectFit: "cover",
+                      display: "block",
+                    }}
+                  />
+                  
+                  {/* Item Info */}
+                  <div style={{ padding: "0.8rem" }}>
+                    <p
+                      style={{
+                        fontFamily: "var(--sans)",
+                        fontSize: "0.75rem",
+                        color: "var(--tan)",
+                        fontWeight: 500,
+                        textTransform: "capitalize",
+                        marginBottom: "0.4rem",
+                      }}
+                    >
+                      {item.type || "Not classified"}
+                    </p>
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <button
+                        onClick={() => {
+                          setEditingItem(item);
+                          setEditingType(item.type || "");
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: "0.5rem",
+                          fontFamily: "var(--sans)",
+                          fontSize: "0.7rem",
+                          background: "var(--tan)",
+                          color: "white",
+                          border: "none",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          transition: "background 0.3s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "var(--tan-dark)";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "var(--tan)";
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteItem(item.id)}
+                        style={{
+                          flex: 1,
+                          padding: "0.5rem",
+                          fontFamily: "var(--sans)",
+                          fontSize: "0.7rem",
+                          background: "#f5e5e5",
+                          color: "#c74545",
+                          border: "none",
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          transition: "background 0.3s",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = "#f0d0d0";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = "#f5e5e5";
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ Edit Item Modal ═══ */}
+        {editingItem && (
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: "rgba(0,0,0,0.5)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1000,
+            }}
+            onClick={() => setEditingItem(null)}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: "white",
+                borderRadius: 12,
+                padding: "2rem",
+                maxWidth: 400,
+                width: "90%",
+                boxShadow: "0 20px 60px rgba(0,0,0,0.15)",
+              }}
+            >
+              <h3
+                style={{
+                  fontFamily: "var(--serif)",
+                  fontSize: "1.3rem",
+                  fontWeight: 400,
+                  color: "var(--charcoal)",
+                  marginBottom: "1.5rem",
+                }}
+              >
+                Edit Item
+              </h3>
+              
+              <img
+                src={editingItem.imageUrl}
+                alt="Item"
+                style={{
+                  width: "100%",
+                  height: 200,
+                  objectFit: "cover",
+                  borderRadius: 8,
+                  marginBottom: "1.5rem",
+                }}
+              />
+              
+              <label
+                style={{
+                  display: "block",
+                  fontFamily: "var(--sans)",
+                  fontSize: "0.9rem",
+                  color: "var(--charcoal)",
+                  marginBottom: "0.5rem",
+                  fontWeight: 500,
+                }}
+              >
+                Item Type
+              </label>
+              <select
+                value={editingType}
+                onChange={(e) => setEditingType(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "0.8rem",
+                  fontFamily: "var(--sans)",
+                  fontSize: "0.95rem",
+                  border: "1px solid rgba(196,168,130,0.3)",
+                  borderRadius: 6,
+                  marginBottom: "1.5rem",
+                  boxSizing: "border-box",
+                }}
+              >
+                <option value="">Not classified</option>
+                <option value="top">Top</option>
+                <option value="bottom">Bottom</option>
+                <option value="dress">Dress</option>
+                <option value="outerwear">Outerwear</option>
+                <option value="shoes">Shoes</option>
+                <option value="accessory">Accessory</option>
+              </select>
+              
+              <div style={{ display: "flex", gap: "1rem" }}>
+                <button
+                  onClick={() => setEditingItem(null)}
+                  style={{
+                    flex: 1,
+                    padding: "0.9rem",
+                    fontFamily: "var(--sans)",
+                    fontSize: "0.9rem",
+                    background: "transparent",
+                    color: "var(--tan)",
+                    border: "1px solid var(--tan)",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    transition: "all 0.3s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(196,168,130,0.08)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleUpdateItem}
+                  style={{
+                    flex: 1,
+                    padding: "0.9rem",
+                    fontFamily: "var(--sans)",
+                    fontSize: "0.9rem",
+                    background: "var(--tan)",
+                    color: "white",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    transition: "background 0.3s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "var(--tan-dark)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--tan)";
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {itemCount >= 4 && !isProcessing && (
           <div style={{ textAlign: "center", marginBottom: "2rem" }}>
             <button
