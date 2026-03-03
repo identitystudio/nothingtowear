@@ -1,190 +1,104 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Replicate from "replicate";
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY || "",
+const replicate = new Replicate({
+  auth: (process.env.REPLICATE_API_TOKEN || "").replace(/['"]/g, "").trim(),
 });
 
-// Initialize Gemini client
-const genAI = process.env.GEMINI_API_KEY
-  ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
-  : null;
-
-async function detectWithGemini(imageDataUrl: string) {
-  if (!genAI) {
-    throw new Error("Gemini API key not configured");
-  }
-
-  console.log("[detect-item] Using Gemini API as fallback");
-  console.log("[detect-item] Image URL type:", imageDataUrl.substring(0, 50) + "...");
-  
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-  let mimeType: string;
-  let base64Data: string;
-
-  // Check if it's a data URL or a regular URL
-  if (imageDataUrl.startsWith("data:")) {
-    // Extract base64 data and mime type from data URL
-    const matches = imageDataUrl.match(/^data:(.+?);base64,(.+)$/);
-    if (!matches) {
-      throw new Error("Invalid image data URL format");
-    }
-    mimeType = matches[1];
-    base64Data = matches[2];
-  } else if (imageDataUrl.startsWith("http://") || imageDataUrl.startsWith("https://")) {
-    // It's a URL, fetch the image and convert to base64
-    console.log("[detect-item] Fetching image from URL for Gemini...");
-    const response = await fetch(imageDataUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image: ${response.statusText}`);
-    }
-    const buffer = await response.arrayBuffer();
-    base64Data = Buffer.from(buffer).toString("base64");
-    mimeType = response.headers.get("content-type") || "image/jpeg";
-  } else {
-    throw new Error("Unsupported image format - must be data URL or HTTP(S) URL");
-  }
-
-  const prompt = `Analyze this clothing item and return ONLY a JSON object with these fields: type (one of: top, bottom, dress, outerwear, shoes, accessory), color (main color), style (casual, formal, sporty, etc.), and description (brief description). No other text, just the JSON object.`;
-
-  const result = await model.generateContent([
-    prompt,
-    {
-      inlineData: {
-        mimeType,
-        data: base64Data,
-      },
-    },
-  ]);
-
-  const response = result.response;
-  const text = response.text();
-  
-  console.log("[detect-item] Gemini raw response:", text.substring(0, 200));
-  
-  // Clean up markdown code blocks if present
-  let cleanText = text.replace(/```json\n?|\n?```/g, "").trim();
-  
-  // Sometimes Gemini adds extra text, try to extract JSON object
-  const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    cleanText = jsonMatch[0];
-  }
-  
-  try {
-    return JSON.parse(cleanText);
-  } catch (parseError) {
-    console.error("[detect-item] Failed to parse Gemini response:", cleanText);
-    throw new Error(`Failed to parse Gemini response: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
-  }
-}
-
+/**
+ * POST /api/detect-item
+ * Detects clothing item type, color, and style using a Two-Step Replicate process:
+ * 1. Vision (Moondream2) -> Natural language description
+ * 2. Structuring (Llama-3) -> JSON output
+ */
 export async function POST(request: NextRequest) {
   try {
     const { image } = await request.json();
 
     if (!image) {
-      return NextResponse.json(
-        { error: "Missing image" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Missing image" }, { status: 400 });
     }
 
-    let itemData;
-    let usedGemini = false;
-
-    // Try OpenAI first
-    if (process.env.OPENAI_API_KEY) {
-      try {
-        const response = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "Analyze this clothing item and return ONLY a JSON object with these fields: type (one of: top, bottom, dress, outerwear, shoes, accessory), color (main color), style (casual, formal, sporty, etc.), and description (brief description). No other text.",
-                },
-                {
-                  type: "image_url",
-                  image_url: {
-                    url: image,
-                  },
-                },
-              ],
-            },
-          ],
-          max_tokens: 300,
-        });
-
-        const result = response.choices[0]?.message?.content;
-        if (result) {
-          itemData = JSON.parse(result);
-          console.log("[detect-item] ✓ OpenAI detection successful");
-        }
-      } catch (openaiError: any) {
-        // Check if it's a quota/insufficient credits error
-        if (
-          openaiError?.status === 429 ||
-          openaiError?.status === 401 ||
-          openaiError?.message?.includes("quota") ||
-          openaiError?.message?.includes("insufficient") ||
-          openaiError?.message?.includes("credit")
-        ) {
-          console.warn("[detect-item] OpenAI quota/credits exceeded, trying Gemini...");
-          try {
-            itemData = await detectWithGemini(image);
-            usedGemini = true;
-          } catch (geminiError) {
-            console.error("[detect-item] Gemini fallback also failed:", geminiError);
-            return NextResponse.json(
-              { 
-                error: "Insufficient OpenAI credits",
-                code: "INSUFFICIENT_CREDITS"
-              },
-              { status: 402 }
-            );
-          }
-        } else {
-          throw openaiError;
-        }
-      }
-    } else {
-      // No OpenAI key, use Gemini directly
-      itemData = await detectWithGemini(image);
-      usedGemini = true;
-    }
-
-    if (!itemData) {
+    if (!(process.env.REPLICATE_API_TOKEN || "").replace(/['"]/g, "").trim()) {
       return NextResponse.json(
-        { error: "No response from AI" },
+        { error: "REPLICATE_API_TOKEN not configured" },
         { status: 500 }
       );
     }
 
-    return NextResponse.json({ 
-      item: itemData,
-      provider: usedGemini ? "gemini" : "openai"
-    });
-  } catch (error) {
-    console.error("[detect-item] Error detecting item:", error);
-    
-    // Log more detailed error information
-    if (error instanceof Error) {
-      console.error("[detect-item] Error message:", error.message);
-      console.error("[detect-item] Error stack:", error.stack);
+    // STEP 1: Vision - Get description
+    console.log("[detect-item] Step 1: Calling Moondream2 for description...");
+    const visionOutput = await replicate.run(
+      "lucataco/moondream2:72ccb656353c348c1385df54b237eeb7bfa874bf11486cf0b9473e691b662d31",
+      {
+        input: {
+          image: image,
+          prompt: "Describe this clothing item in detail, including its type, colors, and style.",
+        },
+      }
+    );
+
+    const description = Array.isArray(visionOutput) ? visionOutput.join("") : (visionOutput as unknown as string);
+    console.log("[detect-item] Vision Description:", description);
+
+    // STEP 2: Structuring - Get JSON
+    console.log("[detect-item] Step 2: Calling Llama-3 for JSON structuring...");
+    const llmPrompt = `Convert this clothing description into a JSON object.
+Description: "${description}"
+
+JSON format:
+{
+  "type": "top" | "bottom" | "dress" | "outerwear" | "shoes" | "accessory",
+  "color": "string",
+  "style": "string",
+  "description": "1-sentence summary"
+}
+
+Return ONLY the JSON. No other text.`;
+
+    const llmOutput = await replicate.run(
+      "meta/meta-llama-3-70b-instruct",
+      {
+        input: {
+          prompt: llmPrompt,
+          system_prompt: "You are a helpful assistant that extracts structured data from text. Always return valid JSON.",
+          max_new_tokens: 500,
+        },
+      }
+    );
+
+    const llmContent = Array.isArray(llmOutput) ? llmOutput.join("") : (llmOutput as unknown as string);
+    console.log("[detect-item] LLM Raw JSON:", llmContent);
+
+    // Extract JSON from LLM output
+    let jsonStr = llmContent;
+    const jsonMatch = llmContent.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
     }
-    
+
+    try {
+      const itemData = JSON.parse(jsonStr);
+      return NextResponse.json({ 
+        item: itemData,
+        provider: "replicate-dual-step"
+      });
+    } catch (parseError) {
+      console.error("[detect-item] Failed to parse LLM response:", llmContent);
+      return NextResponse.json(
+        { error: "Failed to structure response", raw: llmContent },
+        { status: 500 }
+      );
+    }
+  } catch (err: any) {
+    console.error("[detect-item] Dual-Step Error:", err);
     return NextResponse.json(
       { 
-        error: "Failed to detect item",
-        details: error instanceof Error ? error.message : String(error)
+        error: "Detection failed", 
+        message: err.message,
+        status: err.status || 500 
       },
-      { status: 500 }
+      { status: err.status || 500 }
     );
   }
 }

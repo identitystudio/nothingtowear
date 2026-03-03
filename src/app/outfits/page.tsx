@@ -627,11 +627,38 @@ export default function OutfitsPage() {
       workingItems = updatedItems;
     }
 
-    setGenerationProgress("Building outfit combinations...");
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    setGenerationProgress("Stylist is selecting your pieces...");
+    
+    let combos: ClothingItem[][] = [];
+    let explanations: string[] = [];
 
-    const combos = createOutfitCombos(workingItems, 5, !isSummer);
-    console.log(`[Outfits] Created ${combos.length} outfit combos`);
+    try {
+      const smartRes = await fetch("/api/generate-outfit-smart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userRequest: customPrompt,
+          items: workingItems,
+          count: 5,
+          style: weatherMode === "hot" ? "summer" : "winter",
+        }),
+      });
+
+      if (smartRes.ok) {
+        const smartData = await smartRes.json();
+        combos = smartData.outfits.map((o: any) => {
+          explanations.push(o.explanation);
+          return o.itemIds
+            .map((id: string) => workingItems.find((item) => item.id === id))
+            .filter(Boolean) as ClothingItem[];
+        });
+      } else {
+        combos = createOutfitCombos(workingItems, 5, !isSummer);
+      }
+    } catch (err) {
+      combos = createOutfitCombos(workingItems, 5, !isSummer);
+    }
+
     if (combos.length === 0) {
       setIsGenerating(false);
       return;
@@ -642,7 +669,7 @@ export default function OutfitsPage() {
     const outfits: Outfit[] = combos.map((items, index) => ({
       id: `outfit-${Date.now()}-${index}`,
       items,
-      style: customPrompt,
+      style: explanations[index] || customPrompt,
       tightsRec,
       tryOnLoading: true,
     }));
