@@ -5,16 +5,23 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { saveImageToSupabase, clearAllImagesFromSupabase, deleteImageFromSupabase, getAllImagesFromSupabase } from "@/lib/supabase-storage";
+import { ClothingTag, flattenTags, createClothingTag, refineTags } from "@/lib/tagging-system";
 
 interface ClothingItemMeta {
   id: string;
   type?: string;
+  tags?: ClothingTag;
+  autoTagged?: boolean;
+  manuallyRefined?: boolean;
 }
 
 interface ClosetItem {
   id: string;
   type?: string;
   imageUrl: string;
+  tags?: ClothingTag;
+  autoTagged?: boolean;
+  manuallyRefined?: boolean;
 }
 
 const BATCH_SIZE = 15;
@@ -197,6 +204,7 @@ export default function ClosetPage() {
       const newMeta: ClothingItemMeta[] = [...existingMeta];
       let processed = 0;
       let failed = 0;
+      let aiQuotaExceeded = false;
 
       for (
         let batchStart = 0;
@@ -233,7 +241,7 @@ export default function ClosetPage() {
             // Detect item type via GPT-4o Vision
             let detectedType: string | undefined;
             
-            if (ENABLE_AI_DETECTION) {
+            if (ENABLE_AI_DETECTION && !aiQuotaExceeded) {
               try {
                 // Add delay between requests to avoid rate limits (1 per second)
                 if (globalIndex > 0) {
@@ -254,9 +262,9 @@ export default function ClosetPage() {
                 } else if (detectRes.status === 402) {
                   // Insufficient credits error
                   const errorData = await detectRes.json();
-                  toast.error("Insufficient OpenAI credits to process more items");
-                  console.warn(`[Closet] ⚠ Insufficient OpenAI credits - stopping detection`);
-                  break; // Stop processing on insufficient credits
+                  toast.error("Insufficient AI credits to process more items");
+                  console.warn(`[Closet] ⚠ Insufficient AI credits - skipping detection for remaining items`);
+                  aiQuotaExceeded = true;
                 } else if (detectRes.status === 429) {
                   console.warn(`[Closet] ⏸ Rate limit hit - skipping detection for ${file.name}`);
                 } else {
@@ -267,13 +275,42 @@ export default function ClosetPage() {
               }
             }
 
-            newMeta.push({ id, type: detectedType });
+            // Auto-tag the item using AI vision
+            let itemTags: ClothingTag | undefined;
+            try {
+              const tagRes = await fetch("/api/tag-item", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ image: imageData, itemType: detectedType }),
+              });
+              
+              if (tagRes.ok) {
+                const tagData = await tagRes.json();
+                itemTags = createClothingTag(id, tagData);
+                console.log(`[Closet] ✓ Tagged: ${file.name} → ${itemTags.keywords.slice(0, 5).join(", ")}...`);
+              } else {
+                console.warn(`[Closet] ⚠ Tagging failed for ${file.name}: ${tagRes.status}`);
+              }
+            } catch (tagErr) {
+              console.warn(`[Closet] ⚠ Tagging error for ${file.name}:`, tagErr);
+            }
+
+            newMeta.push({ 
+              id, 
+              type: detectedType,
+              tags: itemTags,
+              autoTagged: !!itemTags,
+              manuallyRefined: false,
+            });
             
             // Add to closetItems for immediate display
             setClosetItems(prev => [...prev, {
               id,
               type: detectedType,
-              imageUrl: publicUrl
+              imageUrl: publicUrl,
+              tags: itemTags,
+              autoTagged: !!itemTags,
+              manuallyRefined: false,
             }]);
             
             processed++;
@@ -1001,6 +1038,52 @@ export default function ClosetPage() {
                 <option value="shoes">Shoes</option>
                 <option value="accessory">Accessory</option>
               </select>
+              
+              {/* Tags display */}
+              {editingItem.tags && (
+                <div style={{ marginBottom: "1.5rem" }}>
+                  <label
+                    style={{
+                      display: "block",
+                      fontFamily: "var(--sans)",
+                      fontSize: "0.85rem",
+                      color: "var(--charcoal)",
+                      marginBottom: "0.8rem",
+                      fontWeight: 500,
+                    }}
+                  >
+                    Auto-Generated Tags
+                  </label>
+                  <div style={{ padding: "0.8rem", background: "rgba(196,168,130,0.05)", borderRadius: 6, fontSize: "0.8rem", lineHeight: "1.6", color: "var(--charcoal)" }}>
+                    {editingItem.tags.color && (
+                      <div><strong>Colors:</strong> {editingItem.tags.color.join(", ")}</div>
+                    )}
+                    {editingItem.tags.pattern && (
+                      <div><strong>Pattern:</strong> {editingItem.tags.pattern.join(", ")}</div>
+                    )}
+                    {editingItem.tags.style && (
+                      <div><strong>Style:</strong> {editingItem.tags.style.join(", ")}</div>
+                    )}
+                    {editingItem.tags.fit && (
+                      <div><strong>Fit:</strong> {editingItem.tags.fit.join(", ")}</div>
+                    )}
+                    {editingItem.tags.material && (
+                      <div><strong>Material:</strong> {editingItem.tags.material.join(", ")}</div>
+                    )}
+                    {editingItem.tags.occasion && (
+                      <div><strong>Occasion:</strong> {editingItem.tags.occasion.join(", ")}</div>
+                    )}
+                    {editingItem.tags.description && (
+                      <div style={{ marginTop: "0.6rem", paddingTop: "0.6rem", borderTop: "1px solid rgba(196,168,130,0.2)", fontSize: "0.75rem", fontStyle: "italic" }}>{editingItem.tags.description}</div>
+                    )}
+                  </div>
+                  {editingItem.autoTagged && (
+                    <p style={{ fontFamily: "var(--sans)", fontSize: "0.7rem", color: "var(--soft-gray)", marginTop: "0.4rem" }}>
+                      ✓ Auto-tagged on upload {editingItem.manuallyRefined && " • Manually refined"}
+                    </p>
+                  )}
+                </div>
+              )}
               
               <div style={{ display: "flex", gap: "1rem" }}>
                 <button

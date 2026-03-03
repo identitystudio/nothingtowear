@@ -20,7 +20,7 @@ async function detectWithGemini(imageDataUrl: string) {
   console.log("[detect-item] Using Gemini API as fallback");
   console.log("[detect-item] Image URL type:", imageDataUrl.substring(0, 50) + "...");
   
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
   let mimeType: string;
   let base64Data: string;

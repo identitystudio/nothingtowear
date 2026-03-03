@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import Link from "next/link";
 import { getAllImagesFromSupabase } from "@/lib/supabase-storage";
+import { ClothingTag } from "@/lib/tagging-system";
 
 interface ClothingItem {
   id: string;
@@ -12,6 +13,7 @@ interface ClothingItem {
   type?: "top" | "bottom" | "dress" | "outerwear" | "shoes" | "accessory";
   color?: string;
   style?: string;
+  tags?: ClothingTag;
 }
 
 interface Outfit {
@@ -26,6 +28,7 @@ interface Outfit {
   tryOnScore?: number;
   tryOnChecking?: boolean;
   analysisResult?: string;
+  generatedImageUrl?: string;
 }
 
 const FREE_REVEAL_LIMIT = 3;
@@ -139,7 +142,7 @@ export default function OutfitsPage() {
       const savedMeta = localStorage.getItem("closetItemsMeta");
       const legacyItems = localStorage.getItem("closetItems");
 
-      let meta: { id: string; type?: string }[] = [];
+      let meta: any[] = [];
       if (savedMeta) {
         meta = JSON.parse(savedMeta);
         console.log(`[Outfits] Found ${meta.length} items in metadata store`);
@@ -168,11 +171,12 @@ export default function OutfitsPage() {
             id: m.id,
             image: img,
             type: m.type as ClothingItem["type"],
+            tags: m.tags,
           });
         }
       }
 
-      console.log(`[Outfits] ${items.length} closet items ready`);
+      console.log(`[Outfits] ${items.length} closet items ready (${items.filter(i => i.tags).length} with tags)`);
       if (items.length === 0) {
         router.push("/closet");
         return;
@@ -470,6 +474,39 @@ export default function OutfitsPage() {
       const blob = new Blob([u8arr], { type: mime });
       
       formData.append("Compiled_Clothes", blob, "outfit.jpg");
+      
+      // Also send the personal mannequin photo
+      // Get directly from localStorage to avoid any state synchronization issues
+      const currentBodyPhoto = bodyPhoto || localStorage.getItem("bodyPhoto");
+      
+      if (currentBodyPhoto) {
+        console.log("[Outfits] 📸 Preparing personal mannequin for webhook...");
+        try {
+          const bodyArr = currentBodyPhoto.split(',');
+          if (bodyArr.length > 1) {
+            const bodyMime = bodyArr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+            const bodyBstr = atob(bodyArr[1]);
+            const bodyN = bodyBstr.length;
+            const bodyU8arr = new Uint8Array(bodyN);
+            for (let i = 0; i < bodyN; i++) {
+              bodyU8arr[i] = bodyBstr.charCodeAt(i);
+            }
+            const bodyBlob = new Blob([bodyU8arr], { type: bodyMime });
+            
+            formData.append("Personal_Manequin", bodyBlob, "mannequin.jpg");
+            
+            console.log(`[Outfits] ✓ Attached personal mannequin: ${(currentBodyPhoto.length / 1024).toFixed(0)}KB (Key: Personal_Manequin)`);
+          } else {
+            console.warn("[Outfits] ⚠ bodyPhoto in localStorage is not a valid data URL");
+          }
+        } catch (convErr) {
+          console.error("[Outfits] ❌ Failed to convert mannequin photo for webhook:", convErr);
+        }
+      } else {
+        console.warn("[Outfits] ⚠ No bodyPhoto found in state or localStorage for webhook");
+      }
+
+      console.log("[Outfits] 📤 Sending multipart form data with keys:", Array.from((formData as any).keys()).join(", "));
 
       const webhookRes = await fetch(
         "https://themacularprogram.app.n8n.cloud/webhook/analyze-clothes2",
@@ -487,9 +524,15 @@ export default function OutfitsPage() {
 
       const analysisData = await webhookRes.json();
       console.log(`[Outfits] ✅ Webhook response received!`);
-      console.log(`[Outfits] 📦 Analysis result:`, JSON.stringify(analysisData).substring(0, 300));
+      
+      // Extract generated image URL if it exists
+      let generatedUrl = "";
+      if (Array.isArray(analysisData) && analysisData.length > 0 && analysisData[0].secure_url) {
+        generatedUrl = analysisData[0].secure_url;
+        console.log(`[Outfits] 🖼 Extracted generated image URL: ${generatedUrl}`);
+      }
 
-      // Format the analysis response
+      // Format the analysis response (fallback or if still needed)
       const analysisText = formatAnalysisResponse(analysisData);
       console.log(`[Outfits] 📋 Formatted analysis preview:`, analysisText.substring(0, 200));
 
@@ -506,7 +549,8 @@ export default function OutfitsPage() {
                 tryOnImage: "webhook_analyzed",
                 tryOnLoading: false, 
                 tryOnPassed: true,
-                analysisResult: fullAnalysisText
+                analysisResult: fullAnalysisText,
+                generatedImageUrl: generatedUrl
               }
             : o
         )
@@ -904,7 +948,7 @@ export default function OutfitsPage() {
             </div>
 
             {/* ── Two Panels: Tier 1 Board + Analysis Result ── */}
-            <div style={{ display: "grid", gridTemplateColumns: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult ? "1fr 1fr" : "1fr", gap: "1.5rem", maxWidth: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult ? 960 : 520, margin: "0 auto 1.5rem", transition: "all 0.5s ease" }}>
+            <div style={{ display: "grid", gridTemplateColumns: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult || currentOutfit?.generatedImageUrl ? "1fr 1fr" : "1fr", gap: "1.5rem", maxWidth: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult || currentOutfit?.generatedImageUrl ? 960 : 520, margin: "0 auto 1.5rem", transition: "all 0.5s ease" }}>
 
               {/* ═══ TIER 1: Flat-Lay Board ═══ */}
               <div style={{ borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", border: "1px solid rgba(196,168,130,0.15)" }}>
@@ -1021,11 +1065,13 @@ export default function OutfitsPage() {
               </div>
 
               {/* ═══ Analysis Result Panel (Right Side) ═══ */}
-              {(currentOutfit?.tryOnLoading || currentOutfit?.analysisResult) && (
+              {(currentOutfit?.tryOnLoading || currentOutfit?.analysisResult || currentOutfit?.generatedImageUrl) && (
                 <div style={{ border: "1px solid rgba(196,168,130,0.15)", borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", animation: "fadeInUp 0.5s ease", display: "flex", flexDirection: "column" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem 0.6rem" }}>
-                    <p style={{ fontFamily: "var(--sans)", fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const, color: "var(--soft-gray)" }}>Outfit Analysis</p>
-                    {currentOutfit?.analysisResult && (
+                    <p style={{ fontFamily: "var(--sans)", fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const, color: "var(--soft-gray)" }}>
+                      {currentOutfit?.generatedImageUrl ? "Generated Model" : "Outfit Analysis"}
+                    </p>
+                    {currentOutfit?.analysisResult && !currentOutfit?.generatedImageUrl && (
                       <button
                         onClick={() => currentOutfit && handleCopyAnalysis(currentOutfit.id, currentOutfit.analysisResult || "")}
                         style={{
@@ -1063,6 +1109,16 @@ export default function OutfitsPage() {
                           Parsing webhook response...
                         </p>
                       </div>
+                    </div>
+                  ) : currentOutfit?.generatedImageUrl ? (
+                    <div style={{ flex: 1, position: "relative", background: "var(--cream)" }}>
+                      <Image 
+                        src={currentOutfit.generatedImageUrl} 
+                        alt="Generated Outfit" 
+                        fill 
+                        className="object-contain" 
+                        unoptimized // Cloudinary URLs often benefit from this to avoid double processing
+                      />
                     </div>
                   ) : (
                     <textarea
