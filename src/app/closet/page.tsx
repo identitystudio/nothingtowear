@@ -238,61 +238,40 @@ export default function ClosetPage() {
             // Upload to Supabase Storage and get public URL
             const publicUrl = await saveImageToSupabase(id, imageData);
 
-            // Detect item type via GPT-4o Vision
+            // Analyze item: detect type + generate tags in a single API call
             let detectedType: string | undefined;
-            
+            let itemTags: ClothingTag | undefined;
+
             if (ENABLE_AI_DETECTION && !aiQuotaExceeded) {
               try {
                 // Add delay between requests to avoid rate limits (1 per second)
                 if (globalIndex > 0) {
                   await new Promise(r => setTimeout(r, 1000));
                 }
-                
-                const detectRes = await fetch("/api/detect-item", {
+
+                const analyzeRes = await fetch("/api/analyze-item", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({ image: imageData }),
                 });
-                
-                if (detectRes.ok) {
-                  const detectData = await detectRes.json();
-                  detectedType = detectData.item?.type;
-                  const provider = detectData.provider || "ai";
-                  console.log(`[Closet] ✓ AI detected (${provider}): ${file.name} → ${detectedType} (${detectData.item?.color || "?"}, ${detectData.item?.style || "?"})`);
-                } else if (detectRes.status === 402) {
-                  // Insufficient credits error
-                  const errorData = await detectRes.json();
-                  toast.error("Insufficient AI credits to process more items");
-                  console.warn(`[Closet] ⚠ Insufficient AI credits - skipping detection for remaining items`);
-                  aiQuotaExceeded = true;
-                } else if (detectRes.status === 429) {
-                  console.warn(`[Closet] ⏸ Rate limit hit - skipping detection for ${file.name}`);
-                } else {
-                  console.warn(`[Closet] ⚠ Detection failed for ${file.name}: ${detectRes.status}`);
-                }
-              } catch (detectErr) {
-                console.warn(`[Closet] ⚠ Detection error for ${file.name}:`, detectErr);
-              }
-            }
 
-            // Auto-tag the item using AI vision
-            let itemTags: ClothingTag | undefined;
-            try {
-              const tagRes = await fetch("/api/tag-item", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ image: imageData, itemType: detectedType }),
-              });
-              
-              if (tagRes.ok) {
-                const tagData = await tagRes.json();
-                itemTags = createClothingTag(id, tagData);
-                console.log(`[Closet] ✓ Tagged: ${file.name} → ${itemTags.keywords.slice(0, 5).join(", ")}...`);
-              } else {
-                console.warn(`[Closet] ⚠ Tagging failed for ${file.name}: ${tagRes.status}`);
+                if (analyzeRes.ok) {
+                  const analyzeData = await analyzeRes.json();
+                  detectedType = analyzeData.item?.type;
+                  itemTags = createClothingTag(id, analyzeData.tags);
+                  console.log(`[Closet] ✓ Analyzed: ${file.name} → ${detectedType} | ${itemTags?.keywords.slice(0, 5).join(", ")}`);
+                } else if (analyzeRes.status === 402) {
+                  toast.error("Insufficient AI credits to process more items");
+                  console.warn(`[Closet] ⚠ Insufficient AI credits - skipping remaining items`);
+                  aiQuotaExceeded = true;
+                } else if (analyzeRes.status === 429) {
+                  console.warn(`[Closet] ⏸ Rate limit hit - skipping ${file.name}`);
+                } else {
+                  console.warn(`[Closet] ⚠ Analysis failed for ${file.name}: ${analyzeRes.status}`);
+                }
+              } catch (analyzeErr) {
+                console.warn(`[Closet] ⚠ Analysis error for ${file.name}:`, analyzeErr);
               }
-            } catch (tagErr) {
-              console.warn(`[Closet] ⚠ Tagging error for ${file.name}:`, tagErr);
             }
 
             newMeta.push({ 

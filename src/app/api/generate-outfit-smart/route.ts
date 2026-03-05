@@ -83,7 +83,7 @@ IMPORTANT: Return ONLY the JSON object, no other text.`;
       {
         input: {
           prompt: prompt,
-          max_new_tokens: 2000,
+          max_new_tokens: 4000,
           temperature: 0.7,
         },
       }
@@ -92,13 +92,29 @@ IMPORTANT: Return ONLY the JSON object, no other text.`;
     const content = Array.isArray(output) ? output.join("") : (output as unknown as string);
     console.log("[Generate Outfit Smart] Replicate response received");
 
-    // Robust JSON extraction
+    // Robust JSON extraction with truncation repair
     let result;
     try {
       let jsonStr = content;
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonMatch = content.match(/\{[\s\S]*/);
       if (jsonMatch) {
         jsonStr = jsonMatch[0];
+        // Repair truncated JSON: count and close any unclosed brackets
+        let open = 0;
+        for (const ch of jsonStr) {
+          if (ch === "{" || ch === "[") open++;
+          else if (ch === "}" || ch === "]") open--;
+        }
+        // If truncated, close open brackets in reverse
+        const stack: string[] = [];
+        for (const ch of jsonStr) {
+          if (ch === "{") stack.push("}");
+          else if (ch === "[") stack.push("]");
+          else if (ch === "}" || ch === "]") stack.pop();
+        }
+        if (stack.length > 0) {
+          jsonStr = jsonStr.trimEnd().replace(/,\s*$/, "") + stack.reverse().join("");
+        }
       }
       result = JSON.parse(jsonStr);
     } catch (parseError) {

@@ -43,10 +43,10 @@ export async function POST(request: NextRequest) {
 
     // STEP 2: Structuring - Get JSON
     console.log("[detect-item] Step 2: Calling Llama-3 for JSON structuring...");
-    const llmPrompt = `Convert this clothing description into a JSON object.
+    const llmPrompt = `The image contains multiple visible items, but focus on the MAIN clothing item only.
 Description: "${description}"
 
-JSON format:
+Return a single JSON object for the primary item:
 {
   "type": "top" | "bottom" | "dress" | "outerwear" | "shoes" | "accessory",
   "color": "string",
@@ -54,15 +54,15 @@ JSON format:
   "description": "1-sentence summary"
 }
 
-Return ONLY the JSON. No other text.`;
+Return ONLY that one JSON object. No arrays. No other text.`;
 
     const llmOutput = await replicate.run(
       "meta/meta-llama-3-70b-instruct",
       {
         input: {
           prompt: llmPrompt,
-          system_prompt: "You are a helpful assistant that extracts structured data from text. Always return valid JSON.",
-          max_new_tokens: 500,
+          system_prompt: "You are a helpful assistant that extracts structured data from text. Always return a single valid JSON object (never an array).",
+          max_new_tokens: 200,
         },
       }
     );
@@ -70,19 +70,21 @@ Return ONLY the JSON. No other text.`;
     const llmContent = Array.isArray(llmOutput) ? llmOutput.join("") : (llmOutput as unknown as string);
     console.log("[detect-item] LLM Raw JSON:", llmContent);
 
-    // Extract JSON from LLM output
-    let jsonStr = llmContent;
-    const jsonMatch = llmContent.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      jsonStr = jsonMatch[0];
-    }
-
+    // Extract JSON — handles both object and array responses
+    let itemData: any;
+    const objMatch = llmContent.match(/\{[\s\S]*?\}/);
+    const arrMatch = llmContent.match(/\[[\s\S]*?\]/);
     try {
-      const itemData = JSON.parse(jsonStr);
-      return NextResponse.json({ 
-        item: itemData,
-        provider: "replicate-dual-step"
-      });
+      if (objMatch) {
+        itemData = JSON.parse(objMatch[0]);
+      } else if (arrMatch) {
+        // LLM returned an array despite instructions — take the first element
+        const arr = JSON.parse(arrMatch[0]);
+        itemData = Array.isArray(arr) ? arr[0] : arr;
+      } else {
+        throw new Error("No JSON found in response");
+      }
+      return NextResponse.json({ item: itemData, provider: "replicate-dual-step" });
     } catch (parseError) {
       console.error("[detect-item] Failed to parse LLM response:", llmContent);
       return NextResponse.json(

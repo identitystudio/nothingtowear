@@ -671,16 +671,13 @@ export default function OutfitsPage() {
       items,
       style: explanations[index] || customPrompt,
       tightsRec,
-      tryOnLoading: true,
     }));
 
     setGeneratedOutfits(outfits);
     setCurrentOutfitIndex(0);
     setRevealedOutfitIds(new Set());
     setIsGenerating(false);
-
-    // Mark all outfits for pipeline processing (will be triggered by useEffect)
-    setPendingPipelineOutfits(outfits.map((o) => o.id));
+    setPendingPipelineOutfits([]);
   };
 
   const handleRevealTryOn = (outfitId: string) => {
@@ -696,6 +693,17 @@ export default function OutfitsPage() {
     const newCount = totalRevealsUsed + 1;
     setTotalRevealsUsed(newCount);
     localStorage.setItem("tryOnRevealsUsed", String(newCount));
+  };
+
+  const handleRequestTryOn = (outfit: Outfit) => {
+    setGeneratedOutfits((prev) =>
+      prev.map((o) =>
+        o.id === outfit.id
+          ? { ...o, tryOnLoading: true, tryOnError: undefined }
+          : o
+      )
+    );
+    runTryOnPipeline(outfit.id, "");
   };
 
   const handleRetryTryOn = (outfit: Outfit) => {
@@ -751,6 +759,35 @@ export default function OutfitsPage() {
     );
 
   const currentOutfit = generatedOutfits[currentOutfitIndex];
+
+  // Loading quotes
+  const loadingQuotes = [
+    "You never truly have nothing to wear.",
+    "Style is the art of editing.",
+    "Every great outfit starts with a single piece.",
+    "Dressing well is a form of good manners.",
+    "Your closet is full of potential — we're unlocking it.",
+    "Fashion is what you buy. Style is what you do with it.",
+    "The right outfit can change your entire day.",
+    "Curating something beautiful, just for you.",
+    "Great style isn't about more clothes. It's about the right ones.",
+    "Turning your wardrobe into a story worth telling.",
+  ];
+  const [loadingQuoteIndex, setLoadingQuoteIndex] = useState(0);
+  const [quoteVisible, setQuoteVisible] = useState(true);
+
+  useEffect(() => {
+    if (!currentOutfit?.tryOnLoading) return;
+    const interval = setInterval(() => {
+      setQuoteVisible(false);
+      setTimeout(() => {
+        setLoadingQuoteIndex((i) => (i + 1) % loadingQuotes.length);
+        setQuoteVisible(true);
+      }, 400);
+    }, 3200);
+    return () => clearInterval(interval);
+  }, [currentOutfit?.tryOnLoading]);
+
   const tryOnReady = currentOutfit?.tryOnImage && currentOutfit?.tryOnPassed === true;
   const tryOnRendering = currentOutfit?.tryOnLoading || currentOutfit?.tryOnChecking;
   const tryOnFailed = currentOutfit?.tryOnError || (currentOutfit?.tryOnPassed === false && !currentOutfit?.tryOnChecking);
@@ -975,7 +1012,7 @@ export default function OutfitsPage() {
             </div>
 
             {/* ── Two Panels: Tier 1 Board + Analysis Result ── */}
-            <div style={{ display: "grid", gridTemplateColumns: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult || currentOutfit?.generatedImageUrl ? "1fr 1fr" : "1fr", gap: "1.5rem", maxWidth: currentOutfit?.tryOnLoading || currentOutfit?.analysisResult || currentOutfit?.generatedImageUrl ? 960 : 520, margin: "0 auto 1.5rem", transition: "all 0.5s ease" }}>
+            <div style={{ display: "grid", gridTemplateColumns: currentOutfit ? "1fr 1fr" : "1fr", gap: "1.5rem", maxWidth: currentOutfit ? 960 : 520, margin: "0 auto 1.5rem", transition: "all 0.5s ease" }}>
 
               {/* ═══ TIER 1: Flat-Lay Board ═══ */}
               <div style={{ borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", border: "1px solid rgba(196,168,130,0.15)" }}>
@@ -987,7 +1024,7 @@ export default function OutfitsPage() {
                     const pos = positions[idx] || positions[0];
                     return (
                       <div key={item.id} style={{ position: "absolute", top: pos.top, left: pos.left, width: pos.width, aspectRatio: "1", borderRadius: 10, overflow: "hidden", transform: `rotate(${pos.rotate})`, zIndex: pos.zIndex, boxShadow: "0 8px 30px rgba(42,37,32,0.12)", background: "var(--warm-white)" }}>
-                        <Image src={item.image} alt="Clothing item" fill className="object-cover" />
+                        <Image src={item.image} alt="Clothing item" fill className="object-contain" />
                       </div>
                     );
                   })}
@@ -1092,12 +1129,39 @@ export default function OutfitsPage() {
               </div>
 
               {/* ═══ Analysis Result Panel (Right Side) ═══ */}
-              {(currentOutfit?.tryOnLoading || currentOutfit?.analysisResult || currentOutfit?.generatedImageUrl) && (
+              {currentOutfit && (
                 <div style={{ border: "1px solid rgba(196,168,130,0.15)", borderRadius: 16, overflow: "hidden", background: "var(--warm-white)", animation: "fadeInUp 0.5s ease", display: "flex", flexDirection: "column" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1.2rem 1.5rem 0.6rem" }}>
                     <p style={{ fontFamily: "var(--sans)", fontSize: "0.75rem", fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase" as const, color: "var(--soft-gray)" }}>
-                      {currentOutfit?.generatedImageUrl ? "Generated Model" : "Outfit Analysis"}
+                      {currentOutfit?.generatedImageUrl ? "Generated Model" : currentOutfit?.tryOnLoading ? "Outfit Analysis" : "Virtual Try-On"}
                     </p>
+                    {currentOutfit?.generatedImageUrl && (
+                      <button
+                        onClick={() => currentOutfit && handleRetryTryOn(currentOutfit)}
+                        style={{
+                          background: "none",
+                          border: "none",
+                          fontFamily: "var(--sans)",
+                          fontSize: "0.75rem",
+                          fontWeight: 500,
+                          color: "var(--soft-gray)",
+                          cursor: "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          transition: "color 0.3s ease",
+                        }}
+                        title="Regenerate model image"
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+                          <path d="M21 3v5h-5" />
+                          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+                          <path d="M3 21v-5h5" />
+                        </svg>
+                        Regenerate
+                      </button>
+                    )}
                     {currentOutfit?.analysisResult && !currentOutfit?.generatedImageUrl && (
                       <button
                         onClick={() => currentOutfit && handleCopyAnalysis(currentOutfit.id, currentOutfit.analysisResult || "")}
@@ -1126,30 +1190,74 @@ export default function OutfitsPage() {
                   </div>
 
                   {currentOutfit?.tryOnLoading ? (
-                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem 1.5rem" }}>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ width: 48, height: 48, borderRadius: "50%", border: "2px solid var(--tan-light)", borderTopColor: "var(--tan)", animation: "spin 1s linear infinite", margin: "0 auto 1.2rem" }} />
-                        <p style={{ fontFamily: "var(--serif)", fontSize: "1.1rem", fontWeight: 500, fontStyle: "italic", color: "var(--charcoal)", marginBottom: "0.4rem" }}>
-                          Analyzing outfit...
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "2.5rem 2rem", minHeight: 260 }}>
+                      <div style={{ textAlign: "center", width: "100%" }}>
+                        {/* Elegant animated dots */}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", marginBottom: "2rem" }}>
+                          {[0, 1, 2].map((i) => (
+                            <div
+                              key={i}
+                              style={{
+                                width: 8,
+                                height: 8,
+                                borderRadius: "50%",
+                                background: "var(--tan)",
+                                animation: `ntw-dot-bounce 1.4s ease-in-out ${i * 0.22}s infinite`,
+                              }}
+                            />
+                          ))}
+                        </div>
+
+                        {/* Heading */}
+                        <p style={{
+                          fontFamily: "var(--serif)",
+                          fontSize: "1rem",
+                          fontWeight: 500,
+                          fontStyle: "italic",
+                          color: "var(--charcoal)",
+                          marginBottom: "1.4rem",
+                          letterSpacing: "0.01em",
+                        }}>
+                          Styling you...
                         </p>
-                        <p style={{ fontFamily: "var(--sans)", fontSize: "0.85rem", fontWeight: 400, color: "var(--soft-gray)" }}>
-                          Parsing webhook response...
+
+                        {/* Divider */}
+                        <div style={{ width: 32, height: 1, background: "rgba(196,168,130,0.4)", margin: "0 auto 1.4rem" }} />
+
+                        {/* Cycling quote */}
+                        <p style={{
+                          fontFamily: "var(--sans)",
+                          fontSize: "0.8rem",
+                          fontWeight: 400,
+                          color: "var(--soft-gray)",
+                          lineHeight: 1.6,
+                          maxWidth: 220,
+                          margin: "0 auto",
+                          opacity: quoteVisible ? 1 : 0,
+                          transform: quoteVisible ? "translateY(0)" : "translateY(6px)",
+                          transition: "opacity 0.4s ease, transform 0.4s ease",
+                          minHeight: "2.8em",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}>
+                          &ldquo;{loadingQuotes[loadingQuoteIndex]}&rdquo;
                         </p>
                       </div>
                     </div>
                   ) : currentOutfit?.generatedImageUrl ? (
                     <div style={{ flex: 1, position: "relative", background: "var(--cream)" }}>
-                      <Image 
-                        src={currentOutfit.generatedImageUrl} 
-                        alt="Generated Outfit" 
-                        fill 
-                        className="object-contain" 
-                        unoptimized // Cloudinary URLs often benefit from this to avoid double processing
+                      <Image
+                        src={currentOutfit.generatedImageUrl}
+                        alt="Generated Outfit"
+                        fill
+                        className="object-contain"
+                        unoptimized
                       />
                     </div>
-                  ) : (
+                  ) : currentOutfit?.analysisResult ? (
                     <textarea
-                      value={currentOutfit.analysisResult || ""}
+                      value={currentOutfit.analysisResult}
                       readOnly
                       style={{
                         flex: 1,
@@ -1165,6 +1273,36 @@ export default function OutfitsPage() {
                         lineHeight: 1.6,
                       }}
                     />
+                  ) : (
+                    /* ── Idle state: "See it on me" CTA ── */
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "2.5rem 2rem", minHeight: 280, gap: "1.4rem" }}>
+                      {/* Icon */}
+                      <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--cream)", border: "1px solid rgba(196,168,130,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--tan)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                          <circle cx="12" cy="7" r="4" />
+                        </svg>
+                      </div>
+
+                      {/* Copy */}
+                      <div style={{ textAlign: "center" }}>
+                        <p style={{ fontFamily: "var(--serif)", fontSize: "1.05rem", fontWeight: 500, fontStyle: "italic", color: "var(--charcoal)", marginBottom: "0.4rem" }}>
+                          See it on you
+                        </p>
+                        <p style={{ fontFamily: "var(--sans)", fontSize: "0.8rem", fontWeight: 400, color: "var(--soft-gray)", lineHeight: 1.5, maxWidth: 180, margin: "0 auto" }}>
+                          Generate a model photo wearing this exact outfit
+                        </p>
+                      </div>
+
+                      {/* CTA */}
+                      <button
+                        onClick={() => currentOutfit && handleRequestTryOn(currentOutfit)}
+                        className="cta-btn"
+                        style={{ opacity: 1, animation: "none", padding: "0.75rem 1.8rem", fontSize: "0.88rem", justifyContent: "center" }}
+                      >
+                        See it on me
+                      </button>
+                    </div>
                   )}
                 </div>
               )}
@@ -1186,6 +1324,10 @@ export default function OutfitsPage() {
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         @keyframes fadeInUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes ntw-dot-bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
+          40% { transform: translateY(-10px); opacity: 1; }
+        }
       `}</style>
     </div>
   );
