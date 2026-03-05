@@ -633,6 +633,12 @@ export default function OutfitsPage() {
     let explanations: string[] = [];
 
     try {
+      const weatherContext =
+        weatherMode === "hot" ? "hot weather, summer — avoid heavy coats and thick layers" :
+        weatherMode === "cold" ? "cold weather, winter — include warm layers and outerwear" :
+        locationInput.trim() ? `traveling to ${locationInput.trim()} — versatile, packable pieces` :
+        "traveling — versatile, packable pieces";
+
       const smartRes = await fetch("/api/generate-outfit-smart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -640,7 +646,7 @@ export default function OutfitsPage() {
           userRequest: customPrompt,
           items: workingItems,
           count: 5,
-          style: weatherMode === "hot" ? "summer" : "winter",
+          style: weatherContext,
         }),
       });
 

@@ -74,6 +74,12 @@ export default function ClosetPage() {
           imageUrl: imageMap.get(m.id) || ""
         }));
       setClosetItems(items);
+      // Sync count and metadata with what actually exists in Supabase
+      if (items.length !== meta.length) {
+        setItemCount(items.length);
+        const syncedMeta = meta.filter(m => imageMap.has(m.id));
+        localStorage.setItem("closetItemsMeta", JSON.stringify(syncedMeta));
+      }
     } catch (err) {
       console.error("Error loading closet items:", err);
     } finally {

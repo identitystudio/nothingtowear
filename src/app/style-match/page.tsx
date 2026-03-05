@@ -39,6 +39,33 @@ export default function StyleMatchPage() {
   const [transformImageUrl, setTransformImageUrl] = useState<string | null>(null);
   const [isTransformLoading, setIsTransformLoading] = useState(false);
 
+  const loadingQuotes = [
+    "You never truly have nothing to wear.",
+    "Style is the art of editing.",
+    "Every great outfit starts with a single piece.",
+    "Dressing well is a form of good manners.",
+    "Your closet is full of potential — we're unlocking it.",
+    "Fashion is what you buy. Style is what you do with it.",
+    "The right outfit can change your entire day.",
+    "Curating something beautiful, just for you.",
+    "Great style isn't about more clothes. It's about the right ones.",
+    "Turning your wardrobe into a story worth telling.",
+  ];
+  const [loadingQuoteIndex, setLoadingQuoteIndex] = useState(0);
+  const [quoteVisible, setQuoteVisible] = useState(true);
+
+  useEffect(() => {
+    if (!isTransformLoading) return;
+    const interval = setInterval(() => {
+      setQuoteVisible(false);
+      setTimeout(() => {
+        setLoadingQuoteIndex((i) => (i + 1) % loadingQuotes.length);
+        setQuoteVisible(true);
+      }, 400);
+    }, 3200);
+    return () => clearInterval(interval);
+  }, [isTransformLoading]);
+
   useEffect(() => {
     const savedItems = localStorage.getItem("closetItems");
     if (savedItems) {
@@ -333,55 +360,64 @@ export default function StyleMatchPage() {
                         height: "100%",
                       }}
                     >
-                        <button
-                          onClick={handleTransformThis}
-                          disabled={isTransformLoading}
-                          className="cta-btn"
-                          style={{ opacity: isTransformLoading ? 0.7 : 1, animation: "none" }}
-                        >
-                          {isTransformLoading ? "Transforming..." : "Transform This"}
-                        </button>
-                        {/* Transform This Result */}
+                        {!isTransformLoading && !transformImageUrl && (
+                          <button
+                            onClick={handleTransformThis}
+                            className="cta-btn"
+                            style={{ animation: "none" }}
+                          >
+                            See It On Me
+                          </button>
+                        )}
+                        {/* Result */}
                         {(isTransformLoading || transformImageUrl) && (
                           <div style={{ width: "100%", marginTop: "2rem" }}>
-                            <p
-                              style={{
-                                fontFamily: "var(--sans)",
-                                fontSize: "0.8rem",
-                                color: "var(--warm-gray)",
-                                marginBottom: "0.5rem",
-                              }}
-                            >
-                              Transform Result
-                            </p>
                             {isTransformLoading && (
-                              <div
-                                style={{
+                              <div style={{ textAlign: "center", padding: "1.5rem 0" }}>
+                                {/* Animated dots */}
+                                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", marginBottom: "2rem" }}>
+                                  {[0, 1, 2].map((i) => (
+                                    <div
+                                      key={i}
+                                      style={{
+                                        width: 8,
+                                        height: 8,
+                                        borderRadius: "50%",
+                                        background: "var(--tan)",
+                                        animation: `ntw-dot-bounce 1.4s ease-in-out ${i * 0.22}s infinite`,
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+                                <p style={{
+                                  fontFamily: "var(--serif)",
+                                  fontSize: "1rem",
+                                  fontWeight: 500,
+                                  fontStyle: "italic",
+                                  color: "var(--charcoal)",
+                                  marginBottom: "1.4rem",
+                                  letterSpacing: "0.01em",
+                                }}>
+                                  Styling you...
+                                </p>
+                                <div style={{ width: 32, height: 1, background: "rgba(196,168,130,0.4)", margin: "0 auto 1.4rem" }} />
+                                <p style={{
+                                  fontFamily: "var(--sans)",
+                                  fontSize: "0.8rem",
+                                  fontWeight: 400,
+                                  color: "var(--soft-gray)",
+                                  lineHeight: 1.6,
+                                  maxWidth: 220,
+                                  margin: "0 auto",
+                                  opacity: quoteVisible ? 1 : 0,
+                                  transform: quoteVisible ? "translateY(0)" : "translateY(6px)",
+                                  transition: "opacity 0.4s ease, transform 0.4s ease",
+                                  minHeight: "2.8em",
                                   display: "flex",
                                   alignItems: "center",
-                                  gap: "0.6rem",
-                                  marginBottom: "0.6rem",
-                                }}
-                              >
-                                <div
-                                  style={{
-                                    width: 18,
-                                    height: 18,
-                                    borderRadius: "50%",
-                                    border: "2px solid var(--tan-light)",
-                                    borderTopColor: "var(--tan)",
-                                    animation: "spin 1s linear infinite",
-                                  }}
-                                />
-                                <p
-                                  style={{
-                                    fontFamily: "var(--sans)",
-                                    fontSize: "0.75rem",
-                                    color: "var(--soft-gray)",
-                                    margin: 0,
-                                  }}
-                                >
-                                  Generating your look...
+                                  justifyContent: "center",
+                                }}>
+                                  &ldquo;{loadingQuotes[loadingQuoteIndex]}&rdquo;
                                 </p>
                               </div>
                             )}
@@ -708,6 +744,10 @@ export default function StyleMatchPage() {
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+        @keyframes ntw-dot-bounce {
+          0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+          40% { transform: translateY(-8px); opacity: 1; }
         }
         @keyframes fadeInUp {
           from { opacity: 0; transform: translateY(6px); }

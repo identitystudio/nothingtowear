@@ -51,23 +51,33 @@ export async function POST(request: NextRequest) {
     const prompt = `You are a professional stylist generating outfit combinations.
 
 User Request: "${userRequest}"
-${style ? `Preferred Style/Occasion: ${style}` : ""}
+${style ? `Weather/Occasion Context: ${style}` : ""}
 
 Available Clothing Items (metadata):
 ${itemDescriptions}
 
 Your task:
 1. Generate ${count} cohesive outfit combinations
-2. Each outfit should match the user's request
-3. Each outfit should be wearable (typically 2-5 items per outfit)
-4. Prioritize items with matching tags (color, style, occasion)
+2. STRICTLY respect the weather/occasion context — if it's hot/summer, avoid heavy coats and layers; if it's cold/winter, include warm layers; if traveling, prioritize versatile and packable pieces
+3. Each outfit must match both the user's request AND the weather/occasion context
+4. Each outfit should be wearable (typically 2-4 items)
+5. Prioritize items with matching tags (color, style, occasion, season)
+
+STRICT RULES — violating these makes the outfit invalid:
+- ALWAYS include exactly one "shoes" item in every outfit — this is mandatory
+- NEVER include more than one "bottom" type item (pants, skirt, shorts, jeans) in a single outfit
+- NEVER include more than one "top" type item unless one is clearly an outerwear layer
+- NEVER include more than one "dress" in a single outfit
+- A dress outfit should NOT also include a bottom (skirts/pants)
+- Each outfit must have at most one of each clothing category
+- If no shoes are available in the closet, still build the outfit but note shoes are missing
 
 Return a JSON object with:
 {
   "outfits": [
     {
       "itemIds": ["item-id-1", "item-id-2", ...],
-      "explanation": "Why these items work together"
+      "explanation": "Why these items work together and fit the weather/occasion"
     },
     ...
   ],
