@@ -60,16 +60,26 @@ Your task:
 1. Generate ${count} cohesive outfit combinations
 2. STRICTLY respect the weather/occasion context — if it's hot/summer, avoid heavy coats and layers; if it's cold/winter, include warm layers; if traveling, prioritize versatile and packable pieces
 3. Each outfit must match both the user's request AND the weather/occasion context
-4. Each outfit should be wearable (typically 2-4 items)
-5. Prioritize items with matching tags (color, style, occasion, season)
+4. Prioritize items with matching tags (color, style, occasion, season)
+
+MANDATORY OUTFIT STRUCTURE — every outfit MUST include all three:
+- ONE top (shirt, blouse, sweater, etc.)
+- ONE bottom (pants, jeans, shorts, skirt, trousers)
+- ONE shoes item
+- Outerwear (jacket, coat, cardigan) is OPTIONAL — only include if weather/style calls for it
+- Accessories (bag, scarf, hat) are OPTIONAL
+
+EXCEPTIONS:
+- Dress outfit: ONE dress + ONE shoes (no separate top or bottom)
+- Swimwear outfit: ONLY the swimwear piece(s), no shoes, no top, no bottom
 
 STRICT RULES — violating these makes the outfit invalid:
-- ALWAYS include exactly one "shoes" item in every outfit — this is mandatory
-- NEVER include more than one "bottom" type item (pants, skirt, shorts, jeans) in a single outfit
-- NEVER include more than one "top" type item unless one is clearly an outerwear layer
+- NEVER include more than one "bottom" type item in a single outfit
+- NEVER include more than one "top" type item in a single outfit
+- NEVER include more than one "outerwear" item (jacket, coat, blazer, cardigan, hoodie) in a single outfit
 - NEVER include more than one "dress" in a single outfit
-- A dress outfit should NOT also include a bottom (skirts/pants)
-- Each outfit must have at most one of each clothing category
+- A dress outfit should NOT also include a separate top or bottom
+- A bikini or swimsuit outfit should contain ONLY the swimwear piece(s)
 - If no shoes are available in the closet, still build the outfit but note shoes are missing
 
 Return a JSON object with:
@@ -144,8 +154,80 @@ IMPORTANT: Return ONLY the JSON object, no other text.`;
       );
     }
 
+    // Build a lookup map: itemId -> item type
+    const itemTypeMap = new Map<string, string>();
+    for (const item of items) {
+      if (item.id && item.type) itemTypeMap.set(item.id, item.type.toLowerCase());
+    }
+
+    // Normalize any raw item type string into a canonical category
+    const normalizeCategory = (type: string): string => {
+      const t = type.toLowerCase().trim();
+      if (["pants", "jeans", "shorts", "skirt", "trousers", "bottom", "chinos", "leggings"].includes(t)) return "bottom";
+      if (["top", "shirt", "blouse", "tshirt", "t-shirt", "tank", "tank top", "polo", "tee"].includes(t)) return "top";
+      if (["outerwear", "jacket", "coat", "cardigan", "blazer", "hoodie", "sweater", "vest", "parka", "windbreaker"].includes(t)) return "outerwear";
+      if (["shoes", "sneakers", "boots", "heels", "sandals", "loafers", "flats", "oxfords", "mules", "slides"].includes(t)) return "shoes";
+      if (["dress", "jumpsuit", "romper", "maxi", "mini dress"].includes(t)) return "dress";
+      if (["bikini", "swimwear", "swimsuit", "one-piece", "swim", "swim top", "swim bottom"].includes(t)) return "swimwear";
+      // accessories allow multiples — return the raw type so each unique accessory type is its own category
+      return t;
+    };
+
+    // Categories where only ONE item is allowed per outfit
+    const SINGULAR_CATEGORIES = new Set(["bottom", "top", "outerwear", "shoes", "dress", "swimwear"]);
+    // Accessory types that can have multiples (bag, hat, scarf, belt, jewelry, etc.)
+    // Anything not in SINGULAR_CATEGORIES is treated as multi-allowed
+
+    const sanitizedOutfits = result.outfits.map((outfit: { itemIds: string[]; explanation: string }) => {
+      const seenCategories = new Map<string, string>(); // category -> first item id
+      const keptIds: string[] = [];
+
+      for (const id of outfit.itemIds) {
+        const rawType = itemTypeMap.get(id) || "";
+        const category = normalizeCategory(rawType);
+
+        if (SINGULAR_CATEGORIES.has(category)) {
+          if (!seenCategories.has(category)) {
+            seenCategories.set(category, id);
+            keptIds.push(id);
+          }
+          // else: duplicate category — drop silently
+        } else {
+          keptIds.push(id); // accessories etc — allow multiples
+        }
+      }
+
+      // Swimwear: keep only swimwear item(s)
+      if (seenCategories.has("swimwear")) {
+        return { ...outfit, itemIds: keptIds.filter(id => normalizeCategory(itemTypeMap.get(id) || "") === "swimwear") };
+      }
+
+      // Dress: strip any separate top or bottom
+      if (seenCategories.has("dress")) {
+        return { ...outfit, itemIds: keptIds.filter(id => !["top", "bottom"].includes(normalizeCategory(itemTypeMap.get(id) || ""))) };
+      }
+
+      // Standard outfit: auto-fill any missing required category
+      const requiredCategories = ["top", "bottom", "shoes"];
+      for (const required of requiredCategories) {
+        if (!seenCategories.has(required)) {
+          // Find any unused item of this category from the full closet
+          const candidate = items.find((item: any) => {
+            const cat = normalizeCategory((item.type || "").toLowerCase());
+            return cat === required && !keptIds.includes(item.id);
+          });
+          if (candidate) {
+            keptIds.push(candidate.id);
+            seenCategories.set(required, candidate.id);
+          }
+        }
+      }
+
+      return { ...outfit, itemIds: keptIds };
+    });
+
     return NextResponse.json({
-      outfits: result.outfits,
+      outfits: sanitizedOutfits,
       summary: result.summary,
     });
   } catch (err) {

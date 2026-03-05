@@ -783,7 +783,7 @@ export default function OutfitsPage() {
   const [quoteVisible, setQuoteVisible] = useState(true);
 
   useEffect(() => {
-    if (!currentOutfit?.tryOnLoading) return;
+    if (!currentOutfit?.tryOnLoading && !isGenerating) return;
     const interval = setInterval(() => {
       setQuoteVisible(false);
       setTimeout(() => {
@@ -792,7 +792,7 @@ export default function OutfitsPage() {
       }, 400);
     }, 3200);
     return () => clearInterval(interval);
-  }, [currentOutfit?.tryOnLoading]);
+  }, [currentOutfit?.tryOnLoading, isGenerating]);
 
   const tryOnReady = currentOutfit?.tryOnImage && currentOutfit?.tryOnPassed === true;
   const tryOnRendering = currentOutfit?.tryOnLoading || currentOutfit?.tryOnChecking;
@@ -824,11 +824,72 @@ export default function OutfitsPage() {
 
         {/* Loading Overlay */}
         {isGenerating && (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(42,37,32,0.85)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ width: 64, height: 64, borderRadius: "50%", border: "2px solid rgba(247,243,238,0.2)", borderTopColor: "var(--tan)", animation: "spin 1s linear infinite", margin: "0 auto 1.5rem" }} />
-              <p style={{ fontFamily: "var(--serif)", fontSize: "1.8rem", fontStyle: "italic", color: "var(--cream)", marginBottom: "0.5rem" }}>Styling you...</p>
-              <p style={{ fontFamily: "var(--sans)", fontSize: "1rem", fontWeight: 400, color: "rgba(247,243,238,0.5)" }}>{generationProgress}</p>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(28,24,20,0.97)", zIndex: 50, display: "flex", alignItems: "center", justifyContent: "center", backdropFilter: "blur(6px)" }}>
+            <div style={{ textAlign: "center", maxWidth: 380, padding: "0 2rem", width: "100%" }}>
+
+              {/* Animated fashion bar equalizer */}
+              <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "center", gap: "5px", height: 44, marginBottom: "2.8rem" }}>
+                {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                  <div key={i} style={{
+                    width: 3,
+                    borderRadius: 99,
+                    background: i % 2 === 0 ? "var(--tan)" : "rgba(196,168,130,0.45)",
+                    animation: `ntw-bar-pulse 1.1s ease-in-out ${i * 0.12}s infinite`,
+                  }} />
+                ))}
+              </div>
+
+              {/* Main heading */}
+              <p style={{
+                fontFamily: "var(--serif)",
+                fontSize: "clamp(2rem, 5vw, 2.8rem)",
+                fontStyle: "italic",
+                fontWeight: 400,
+                color: "var(--cream)",
+                marginBottom: "0.5rem",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.1,
+              }}>
+                Styling you...
+              </p>
+
+              {/* Status line */}
+              <p style={{
+                fontFamily: "var(--sans)",
+                fontSize: "0.7rem",
+                fontWeight: 500,
+                color: "rgba(196,168,130,0.6)",
+                letterSpacing: "0.18em",
+                textTransform: "uppercase",
+                marginBottom: "2.8rem",
+              }}>
+                {generationProgress}
+              </p>
+
+              {/* Thin gold rule */}
+              <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "2.4rem", justifyContent: "center" }}>
+                <div style={{ width: 28, height: 1, background: "rgba(196,168,130,0.25)" }} />
+                <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(196,168,130,0.5)" }} />
+                <div style={{ width: 28, height: 1, background: "rgba(196,168,130,0.25)" }} />
+              </div>
+
+              {/* Cycling quote */}
+              <p style={{
+                fontFamily: "var(--serif)",
+                fontStyle: "italic",
+                fontSize: "1.05rem",
+                color: "rgba(247,243,238,0.55)",
+                lineHeight: 1.75,
+                maxWidth: 300,
+                margin: "0 auto",
+                opacity: quoteVisible ? 1 : 0,
+                transform: quoteVisible ? "translateY(0)" : "translateY(10px)",
+                transition: "opacity 0.55s ease, transform 0.55s ease",
+                minHeight: "3.5em",
+              }}>
+                &ldquo;{loadingQuotes[loadingQuoteIndex]}&rdquo;
+              </p>
+
             </div>
           </div>
         )}
@@ -1333,6 +1394,10 @@ export default function OutfitsPage() {
         @keyframes ntw-dot-bounce {
           0%, 80%, 100% { transform: translateY(0); opacity: 0.35; }
           40% { transform: translateY(-10px); opacity: 1; }
+        }
+        @keyframes ntw-bar-pulse {
+          0%, 100% { height: 6px; opacity: 0.3; }
+          50% { height: 36px; opacity: 1; }
         }
       `}</style>
     </div>
